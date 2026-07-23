@@ -1,0 +1,310 @@
+
+# RuoYi AI
+
+<div align="center">
+
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![MIT License][license-shield]][license-url]
+
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/13209">
+    <img src="https://trendshift.io/api/badge/repositories/13209" alt="GitHub Trending">
+  </a>
+</p>
+
+<img src="docs/image/logo.png" alt="RuoYi AI Logo" width="120" height="120">
+
+### Enterprise-Grade AI Assistant Platform
+
+*An out-of-the-box full-stack AI platform supporting multi-agent collaboration, Supervisor mode orchestration, and multiple decision models, with advanced RAG technology and visual workflow orchestration capabilities*
+
+**[中文](README.md)** | **[📖 Documentation](https://doc.ruoyiai.chat/)** |
+**[🚀 Live Demo](https://web.ruoyiai.chat/)** | **[🐛 Report Issues](https://github.com/ageerle/ruoyi-ai/issues)** | **[💡 Feature Requests](https://github.com/ageerle/ruoyi-ai/issues)**
+
+</div>
+
+
+
+
+## ✨ Core Features
+
+| Module | Current Capabilities |
+|:---:|---|
+| **Model Management** | Multi-model integration (OpenAI/DeepSeek/Tongyi/Zhipu/MiniMax), multi-modal understanding, Coze/DIFY/FastGPT platform integration |
+| **Knowledge Base** | Local RAG + Vector DB (Milvus/Weaviate/Qdrant) + Document parsing |
+| **Tool Management** | MCP protocol integration, Skills capability + Extensible tool ecosystem |
+| **Workflow Orchestration** | Visual workflow designer, drag-and-drop node orchestration, SSE streaming execution, currently supports model calls, email sending, manual review nodes |
+| **Multi-Agent** | Agent framework based on Langchain4j, Supervisor mode orchestration, supports multiple decision models |
+
+### Project Repositories
+
+| Module     | GitHub Repository                                             | Gitee Repository                                             | GitCode Repository                                             |
+|----------|-------------------------------------------------------|------------------------------------------------------|--------------------------------------------------------|
+| 🔧 Backend  | [ruoyi-ai](https://github.com/ageerle/ruoyi-ai)       | [ruoyi-ai](https://gitee.com/ageerle/ruoyi-ai)       | [ruoyi-ai](https://gitcode.com/ageerle/ruoyi-ai)       |
+| 🎨 User Frontend  | [ruoyi-web](https://github.com/ageerle/ruoyi-web)     | [ruoyi-web](https://gitee.com/ageerle/ruoyi-web)     | [ruoyi-web](https://gitcode.com/ageerle/ruoyi-web)     |
+| 🛠️ Admin Panel | [ruoyi-admin](https://github.com/ageerle/ruoyi-admin) | [ruoyi-admin](https://gitee.com/ageerle/ruoyi-admin) | [ruoyi-admin](https://gitcode.com/ageerle/ruoyi-admin) |
+| 🎬 Drama | [ruoyi-drama](https://github.com/ageerle/ruoyi-drama) | [ruoyi-drama](https://gitee.com/ageerle/ruoyi-drama) | |
+| 🤖 Copilot | [ruoyi-copilot](https://github.com/ageerle/ruoyi-copilot) | [ruoyi-copilot](https://gitee.com/ageerle/ruoyi-copilot) | [ruoyi-copilot](https://gitcode.com/ageerle/ruoyi-copilot) |
+| 📱 Mini-App | [ruoyi-uniapp](https://github.com/ageerle/ruoyi-uniapp) | [ruoyi-uniapp](https://gitee.com/ageerle/ruoyi-uniapp) | [ruoyi-uniapp](https://gitcode.com/ageerle/ruoyi-uniapp) |
+
+### Partner Projects
+| Project Name           | GitHub Repository                                             | Gitee Repository |
+|----------------|-------------------------------------------------------|------------------------------------------------------|
+| element-plus-x | [element-plus-x](https://github.com/element-plus-x/Element-Plus-X)       | [element-plus-x](https://gitee.com/he-jiayue/element-plus-x)       |
+
+## 🛠️ Technical Architecture
+
+### Core Framework
+- **Backend**: Spring Boot 3.5.8 + Langchain4j
+- **Data Storage**: MySQL 8.0 + Redis + Vector Databases (Milvus/Weaviate/Qdrant)
+- **Frontend**: Vue 3 + Vben Admin + element-plus-x
+- **Security**: Sa-Token + JWT dual-layer security
+- **Document Processing**: PDF, Word, Excel parsing, intelligent image analysis
+- **Real-time Communication**: WebSocket real-time communication, SSE streaming response
+- **System Monitoring**: Comprehensive logging system, performance monitoring, service health checks
+
+## 🐳 Docker Deployment
+
+This project provides two Docker deployment methods:
+
+### Method 1: One-click Start All Services (Recommended)
+
+Use `docker-compose-all.yaml` to start all services at once (including backend, admin panel, user frontend, and dependencies):
+
+```bash
+# Clone the repository
+git clone https://github.com/ageerle/ruoyi-ai.git
+cd ruoyi-ai
+
+# Start all services (pull pre-built images from registry)
+docker-compose -f docker-compose-all.yaml up -d
+
+# Check service status
+docker-compose -f docker-compose-all.yaml ps
+
+# Access services
+# Admin Panel: http://localhost:25666 (admin / admin123)
+# User Frontend: http://localhost:25137
+# Backend API: http://localhost:26039
+```
+
+### Method 2: Step-by-step Deployment (Source Build)
+
+If you need to build backend services from source, follow these steps:
+
+#### Step 1: Deploy Backend Service
+
+```bash
+# Enter backend project directory
+cd ruoyi-ai
+
+# Start backend service (build from source)
+docker-compose up -d --build
+
+# Wait for backend service to start
+docker-compose logs -f backend
+```
+
+#### Step 2: Deploy Admin Panel
+
+```bash
+# Enter admin panel project directory
+cd ruoyi-admin
+
+# Build and start admin panel
+docker-compose up -d --build
+
+# Access admin panel
+# URL: http://localhost:5666
+```
+
+#### Step 3: Deploy User Frontend (Optional)
+
+```bash
+# Enter user frontend project directory
+cd ruoyi-web
+
+# Build and start user frontend
+docker-compose up -d --build
+
+# Access user frontend
+# URL: http://localhost:5137
+```
+
+### Service Ports
+
+| Service | One-click Port | Step-by-step Port | Description |
+|------|-------------|-------------|------|
+| Admin Panel | 25666 | 5666 | Admin backend access |
+| User Frontend | 25137 | 5137 | User frontend access |
+| Backend Service | 26039 | 6039 | Backend API service |
+| MySQL | 23306 | 23306 | Database service |
+| Redis | 26379 | 6379 | Cache service |
+| Weaviate | 28080 | 28080 | Vector database |
+| MinIO API | 29000 | 9000 | Object storage API |
+| MinIO Console | 29090 | 9090 | Object storage console |
+
+### Image Registry
+
+All images are hosted on Alibaba Cloud Container Registry:
+
+```
+crpi-31mraxd99y2gqdgr.cn-beijing.personal.cr.aliyuncs.com/ruoyi_ai
+```
+
+Available images:
+- `mysql:v3` - MySQL database (includes initialization SQL)
+- `redis:6.2` - Redis cache
+- `weaviate:1.30.0` - Vector database
+- `minio:latest` - Object storage
+- `ruoyi-ai-backend:latest` - Backend service
+- `ruoyi-ai-admin:latest` - Admin frontend
+- `ruoyi-ai-web:latest` - User frontend
+
+### Common Commands
+
+```bash
+# Stop all services
+docker-compose -f docker-compose-all.yaml down
+
+# View service logs
+docker-compose -f docker-compose-all.yaml logs -f [service-name]
+
+# Restart a service
+docker-compose -f docker-compose-all.yaml restart [service-name]
+```
+
+### MiniMax Configuration
+
+The built-in MiniMax provider accepts one API Host value and selects the matching protocol adapter. Use a Base URL from this table:
+
+| Region | OpenAI-compatible Base URL | Anthropic-compatible Base URL |
+| --- | --- | --- |
+| Global | `https://api.minimax.io/v1` | `https://api.minimax.io/anthropic` |
+| China | `https://api.minimaxi.com/v1` | `https://api.minimaxi.com/anthropic` |
+
+For Anthropic-compatible requests, configure the Base URL ending in `/anthropic`. Do not append `/v1` or `/v1/messages`; the provider adapter derives the request path internally.
+
+| Model ID | Total context | Input modalities | Thinking |
+| --- | ---: | --- | --- |
+| `MiniMax-M3` | 1,000,000 tokens | Text, image, video | Adaptive or disabled |
+| `MiniMax-M2.7` | 204,800 tokens | Text | Always on |
+
+Current pay-as-you-go prices are in USD per million tokens:
+
+| Model | Service tier and input range | Input | Output | Cache read | Cache write |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `MiniMax-M3` | Standard, up to 512,000 input tokens | $0.30 | $1.20 | $0.06 | Not listed |
+| `MiniMax-M3` | Standard, over 512,000 input tokens | $0.60 | $2.40 | $0.12 | Not listed |
+| `MiniMax-M3` | Priority, up to 512,000 input tokens | $0.45 | $1.80 | $0.09 | Not listed |
+| `MiniMax-M3` | Priority, over 512,000 input tokens | $0.90 | $3.60 | $0.18 | Not listed |
+| `MiniMax-M2.7` | Standard | $0.30 | $1.20 | $0.06 | $0.375 |
+
+See the [official API overview](https://platform.minimax.io/docs/api-reference/api-overview) and [pay-as-you-go pricing](https://platform.minimax.io/docs/guides/pricing-paygo) for current details.
+
+## 📚 Documentation
+
+Want to learn more about installation, deployment, configuration, and secondary development?
+
+**👉 [Complete Documentation](https://doc.ruoyiai.chat/)**
+
+## 🤝 Contributing
+
+We warmly welcome community contributions! Whether you are a seasoned developer or just getting started, you can contribute to the project 💪
+
+### How to Contribute
+
+1. **Fork** the project to your account
+2. **Create a branch** (`git checkout -b feature/new-feature-name`)
+3. **Commit your changes** (`git commit -m 'Add new feature'`)
+4. **Push to the branch** (`git push origin feature/new-feature-name`)
+5. **Create a Pull Request**
+
+> 💡 **Tip**: We recommend submitting PRs to GitHub, we will automatically sync to other code hosting platforms
+
+## 📄 License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+Thanks to the following excellent open-source projects for their support:
+- [Langchain4j](https://github.com/langchain4j/langchain4j) - Powerful Java LLM development framework
+- [RuoYi-Vue-Plus](https://gitee.com/dromara/RuoYi-Vue-Plus) - Mature enterprise-level rapid development framework
+- [Vben Admin](https://github.com/vbenjs/vue-vben-admin) - Modern Vue admin template
+
+## 💎 Sponsors
+
+**Thanks to the following sponsors for supporting this project:**
+
+<a href="https://www.atlascloud.ai?ref=89F97E">
+  <img src="docs/image/sponsor/atlascloud_banner.png" alt="Atlas Cloud" width="160" height="80">
+</a>
+
+[Visit Atlas Cloud](https://www.atlascloud.ai?ref=89F97E) · [Coding Plan Promotion](https://www.atlascloud.ai/console/coding-plan)
+A full-modal AI inference platform that gives developers a unified AI API, supporting video generation, image generation, and LLMs. Connect once to access **300+ curated models**.
+
+<a href="https://www.volcengine.com/activity/codingplan?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ageerle-ruoyi-ai">
+  <img src="docs/image/sponsor/huoshan.png" alt="Volcengine CodingPlan" width="160" height="80">
+</a>
+
+[Volcengine CodingPlan Developer Program](https://www.volcengine.com/activity/codingplan?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ageerle-ruoyi-ai)
+Volcengine is ByteDance's cloud and AI service platform. Volcengine Ark provides API access to Doubao LLM, DeepSeek, and more — a one-stop AI development and inference platform for developers.
+
+## 💬 Community Chat
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center">
+<img src="docs/image/wx.png" alt="WeChat QR Code" width="200" height="200"><br>
+<strong>Scan to add author on WeChat</strong><br>
+<em>Join group for learning</em>
+</td>
+<td align="center">
+<img src="docs/image/qq.png" alt="QQ Group QR Code" width="200" height="200"><br>
+<strong>QQ Tech Exchange Group</strong><br>
+<em>Technical discussion</em>
+</td>
+
+</tr>
+</table>
+
+</div>
+
+---
+
+<div align="center">
+
+**[⭐ Star to Support](https://github.com/ageerle/ruoyi-ai)** • **[Fork to Contribute](https://github.com/ageerle/ruoyi-ai/fork)** • **[📚 中文](README.md)** • **[📖 Complete Documentation](https://doc.ruoyiai.chat/)**
+
+*Built with ❤️, maintained by the RuoYi AI open-source community*
+
+</div>
+
+<!-- Badge Links -->
+
+[contributors-shield]: https://img.shields.io/github/contributors/ageerle/ruoyi-ai.svg?style=flat-square
+
+[contributors-url]: https://github.com/ageerle/ruoyi-ai/graphs/contributors
+
+[forks-shield]: https://img.shields.io/github/forks/ageerle/ruoyi-ai.svg?style=flat-square
+
+[forks-url]: https://github.com/ageerle/ruoyi-ai/network/members
+
+[stars-shield]: https://img.shields.io/github/stars/ageerle/ruoyi-ai.svg?style=flat-square
+
+[stars-url]: https://github.com/ageerle/ruoyi-ai/stargazers
+
+[issues-shield]: https://img.shields.io/github/issues/ageerle/ruoyi-ai.svg?style=flat-square
+
+[issues-url]: https://github.com/ageerle/ruoyi-ai/issues
+
+[license-shield]: https://img.shields.io/github/license/ageerle/ruoyi-ai.svg?style=flat-square
+
+[license-url]: https://github.com/ageerle/ruoyi-ai/blob/main/LICENSE
