@@ -42,6 +42,12 @@
             <artifactId>langchain4j-open-ai</artifactId>
             <version>${langchain4j.version}</version>
         </dependency>
+        <!-- 自定义 OpenAI 兼容服务（如 vLLM）需要可显式固定 HTTP/1.1。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>dev.langchain4j</groupId>

@@ -48,7 +48,8 @@ services:
     container_name: ruoyi-ai-redis
     restart: always
     ports:
-      - "6379:6379"
+      # 6379 已被本机的其他服务占用；容器内后端仍通过 redis:6379 访问。
+      - "26379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
@@ -99,8 +100,9 @@ services:
   # RuoYi-AI 后端服务 (源码编译)
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile.backend
+      # Dockerfile 需要复制仓库根目录下的 Maven 模块。
+      context: ../../..
+      dockerfile: docs/docker/ruoyi-ai/Dockerfile.backend
     container_name: ruoyi-ai-backend
     restart: always
     ports:
@@ -124,6 +126,8 @@ services:
     volumes:
       - logs-data:/ruoyi/server/logs
       - upload-data:/ruoyi/upload
+      # Skills 由后端从磁盘读取 SKILL.md；挂载源码目录后，管理员创建智能体时可选择它们。
+      - ../../../ruoyi-admin/src/main/resources/skills:/app/ruoyi-admin/src/main/resources/skills:ro
     depends_on:
       mysql:
         condition: service_healthy

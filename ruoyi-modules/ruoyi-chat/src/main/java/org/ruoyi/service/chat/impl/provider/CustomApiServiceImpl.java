@@ -1,6 +1,7 @@
 package org.ruoyi.service.chat.impl.provider;
 
 import cn.hutool.core.util.StrUtil;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -15,6 +16,7 @@ import org.ruoyi.service.chat.AbstractChatService;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.net.http.HttpClient;
 import java.util.List;
 
 /**
@@ -38,6 +40,7 @@ public class CustomApiServiceImpl implements AbstractChatService {
             .baseUrl(normalizeBaseUrl(chatModelVo.getApiHost()))
             .apiKey(defaultIfBlank(chatModelVo.getApiKey(), "EMPTY"))
             .modelName(chatModelVo.getModelName())
+            .httpClientBuilder(http11ClientBuilder())
             .timeout(DEFAULT_TIMEOUT)
             .listeners(List.of(new MyChatModelListener()))
             .returnThinking(chatRequest.getEnableThinking())
@@ -50,6 +53,7 @@ public class CustomApiServiceImpl implements AbstractChatService {
             .baseUrl(normalizeBaseUrl(chatModelVo.getApiHost()))
             .apiKey(defaultIfBlank(chatModelVo.getApiKey(), "EMPTY"))
             .modelName(chatModelVo.getModelName())
+            .httpClientBuilder(http11ClientBuilder())
             .timeout(DEFAULT_TIMEOUT)
             .build();
     }
@@ -68,5 +72,16 @@ public class CustomApiServiceImpl implements AbstractChatService {
 
     private String defaultIfBlank(String value, String defaultValue) {
         return StrUtil.isBlank(value) ? defaultValue : value;
+    }
+
+    /**
+     * vLLM 的 Uvicorn 服务不支持 JDK HttpClient 在明文 HTTP 下默认尝试的 h2c 升级。
+     * 固定 HTTP/1.1，避免 Upgrade: h2c 导致服务端丢弃 chunked 请求体并返回 400。
+     */
+    private JdkHttpClientBuilder http11ClientBuilder() {
+        return new JdkHttpClientBuilder()
+            .httpClientBuilder(HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1))
+            .connectTimeout(Duration.ofSeconds(30))
+            .readTimeout(DEFAULT_TIMEOUT);
     }
 }

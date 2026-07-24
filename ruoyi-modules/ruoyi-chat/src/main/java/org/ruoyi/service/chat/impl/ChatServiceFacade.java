@@ -219,23 +219,26 @@ public class ChatServiceFacade implements IChatService {
 
         Long userId = chatRequest.getUserId();
 
-        // 工具装配：智能体有关联工具ID时按ID装配，否则回退到原有硬编码 MCP 客户端
-        ToolProvider toolProvider;
+        // 工具装配：仅加载智能体显式关联的 MCP 工具。
+        // 不能在未配置工具时回退到旧的硬编码 Stdio MCP 客户端：该客户端使用了
+        // Windows npx.cmd 路径，而服务端 Docker 容器运行在 Linux，导致普通聊天在
+        // 模型调用前就失败。
+        ToolProvider toolProvider = null;
         if (agentVo != null && agentVo.getMcpToolIds() != null && !agentVo.getMcpToolIds().isEmpty()) {
             toolProvider = langChain4jMcpToolProviderService.getToolProvider(agentVo.getMcpToolIds());
-        } else {
-            toolProvider = buildDefaultMcpToolProvider(userId);
         }
 
         // Skills 装配：智能体有勾选技能名时按名过滤磁盘 skills，否则加载全部
         ShellSkills skills = buildShellSkills(agentVo);
 
         // 构建子 Agent
-        WebSearchAgent searchAgent  = AgenticServices.agentBuilder(WebSearchAgent.class)
+        var searchAgentBuilder = AgenticServices.agentBuilder(WebSearchAgent.class)
             .chatModel(plannerModel)
-            .toolProvider(toolProvider)
-            .listener(new MyAgentListener())
-            .build();
+            .listener(new MyAgentListener());
+        if (toolProvider != null) {
+            searchAgentBuilder.toolProvider(toolProvider);
+        }
+        WebSearchAgent searchAgent = searchAgentBuilder.build();
 
         // SkillsAgent：仅当有可用 skills 时才注入 systemMessage + toolProvider
         var skillsAgentBuilder = AgenticServices.agentBuilder(SkillsAgent.class)
@@ -679,4 +682,3 @@ public class ChatServiceFacade implements IChatService {
         };
     }
 }
-
