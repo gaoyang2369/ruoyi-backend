@@ -15,11 +15,11 @@ import org.ruoyi.common.json.utils.JsonUtils;
 import org.ruoyi.common.mybatis.core.page.PageQuery;
 import org.ruoyi.common.mybatis.core.page.TableDataInfo;
 import org.ruoyi.config.agent.SkillsPathResolver;
-import org.ruoyi.domain.entity.agent.Agent;
 import org.ruoyi.domain.bo.agent.AgentBo;
+import org.ruoyi.domain.entity.agent.Agent;
+import org.ruoyi.domain.entity.mcp.McpTool;
 import org.ruoyi.domain.enums.agent.AgentExecutionMode;
 import org.ruoyi.domain.enums.agent.AgentScenarioCode;
-import org.ruoyi.domain.entity.mcp.McpTool;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.domain.vo.agent.SkillOptionVo;
 import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +51,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class AgentServiceImpl implements IAgentService {
+
+    private static final Set<String> EVIDENCE_REQUIRED_VALUES = Set.of("0", "1");
 
     private final AgentMapper baseMapper;
     private final McpToolMapper mcpToolMapper;
@@ -215,6 +218,9 @@ public class AgentServiceImpl implements IAgentService {
         return vo;
     }
 
+    /**
+     * 将实体中的 Long JSON 数组转换为空安全列表。
+     */
     private List<Long> parseLongArray(String json) {
         if (!StringUtils.hasText(json)) {
             return new ArrayList<>();
@@ -223,6 +229,9 @@ public class AgentServiceImpl implements IAgentService {
         return list == null ? new ArrayList<>() : list;
     }
 
+    /**
+     * 将实体中的 String JSON 数组转换为空安全列表。
+     */
     private List<String> parseStringArray(String json) {
         if (!StringUtils.hasText(json)) {
             return new ArrayList<>();
@@ -231,6 +240,9 @@ public class AgentServiceImpl implements IAgentService {
         return list == null ? new ArrayList<>() : list;
     }
 
+    /**
+     * 校验数据库仍以字符串保存的场景配置，阻止非法值进入运行时路由。
+     */
     private void validateScenarioConfiguration(Agent entity) {
         if (!AgentScenarioCode.isSupported(entity.getScenarioCode())) {
             throw new ServiceException("不支持的智能体场景: " + entity.getScenarioCode());
@@ -238,8 +250,15 @@ public class AgentServiceImpl implements IAgentService {
         if (!AgentExecutionMode.isSupported(entity.getExecutionMode())) {
             throw new ServiceException("不支持的执行模式: " + entity.getExecutionMode());
         }
+        if (entity.getEvidenceRequired() != null
+            && !EVIDENCE_REQUIRED_VALUES.contains(entity.getEvidenceRequired())) {
+            throw new ServiceException("是否强制生成证据只能为0或1");
+        }
     }
 
+    /**
+     * 构建管理端 Agent 查询条件；scenarioCode 为空时不增加场景过滤。
+     */
     private LambdaQueryWrapper<Agent> buildQueryWrapper(AgentBo bo) {
         LambdaQueryWrapper<Agent> wrapper = Wrappers.lambdaQuery();
         wrapper.like(StringUtils.hasText(bo.getAgentName()), Agent::getAgentName, bo.getAgentName())
