@@ -55,6 +55,23 @@ public class AgentBo extends BaseEntity {
     private Long modelId;
 
     /**
+     * 场景：GENERAL_CHAT/FAULT_DIAGNOSIS
+     */
+    @NotBlank(message = "智能体场景不能为空")
+    private String scenarioCode;
+
+    /**
+     * 执行方式：SUPERVISOR/DETERMINISTIC
+     */
+    @NotBlank(message = "执行模式不能为空")
+    private String executionMode;
+
+    /**
+     * 是否强制生成证据：0 否 1 是
+     */
+    private String evidenceRequired;
+
+    /**
      * 是否启用深度思考：0 否 1 是
      */
     private String enableThinking;

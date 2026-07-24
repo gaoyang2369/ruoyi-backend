@@ -60,6 +60,21 @@ public class AgentVo implements Serializable {
     private String modelName;
 
     /**
+     * 场景：GENERAL_CHAT/FAULT_DIAGNOSIS
+     */
+    private String scenarioCode;
+
+    /**
+     * 执行方式：SUPERVISOR/DETERMINISTIC
+     */
+    private String executionMode;
+
+    /**
+     * 是否强制生成证据：0 否 1 是
+     */
+    private String evidenceRequired;
+
+    /**
      * 是否启用深度思考：0 否 1 是
      */
     @ExcelProperty(value = "深度思考")

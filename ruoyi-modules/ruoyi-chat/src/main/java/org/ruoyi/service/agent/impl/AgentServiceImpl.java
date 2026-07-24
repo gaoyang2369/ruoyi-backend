@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.MapstructUtils;
 import org.ruoyi.common.json.utils.JsonUtils;
 import org.ruoyi.common.mybatis.core.page.PageQuery;
@@ -16,6 +17,8 @@ import org.ruoyi.common.mybatis.core.page.TableDataInfo;
 import org.ruoyi.config.agent.SkillsPathResolver;
 import org.ruoyi.domain.entity.agent.Agent;
 import org.ruoyi.domain.bo.agent.AgentBo;
+import org.ruoyi.domain.enums.agent.AgentExecutionMode;
+import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.entity.mcp.McpTool;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.domain.vo.agent.SkillOptionVo;
@@ -87,6 +90,16 @@ public class AgentServiceImpl implements IAgentService {
         if (!StringUtils.hasText(entity.getEnableThinking())) {
             entity.setEnableThinking("0");
         }
+        if (!StringUtils.hasText(entity.getScenarioCode())) {
+            entity.setScenarioCode(AgentScenarioCode.GENERAL_CHAT.name());
+        }
+        if (!StringUtils.hasText(entity.getExecutionMode())) {
+            entity.setExecutionMode(AgentExecutionMode.SUPERVISOR.name());
+        }
+        if (!StringUtils.hasText(entity.getEvidenceRequired())) {
+            entity.setEvidenceRequired("0");
+        }
+        validateScenarioConfiguration(entity);
         entity.setMcpToolIds(JsonUtils.toJsonString(bo.getMcpToolIds()));
         entity.setSkillNames(JsonUtils.toJsonString(bo.getSkillNames()));
         entity.setKnowledgeIds(JsonUtils.toJsonString(bo.getKnowledgeIds()));
@@ -97,6 +110,7 @@ public class AgentServiceImpl implements IAgentService {
     @Transactional
     public Boolean updateByBo(AgentBo bo) {
         Agent entity = MapstructUtils.convert(bo, Agent.class);
+        validateScenarioConfiguration(entity);
         entity.setMcpToolIds(JsonUtils.toJsonString(bo.getMcpToolIds()));
         entity.setSkillNames(JsonUtils.toJsonString(bo.getSkillNames()));
         entity.setKnowledgeIds(JsonUtils.toJsonString(bo.getKnowledgeIds()));
@@ -147,6 +161,9 @@ public class AgentServiceImpl implements IAgentService {
         vo.setAgentDescribe(entity.getAgentDescribe());
         vo.setAgentShow(entity.getAgentShow());
         vo.setModelId(entity.getModelId());
+        vo.setScenarioCode(entity.getScenarioCode());
+        vo.setExecutionMode(entity.getExecutionMode());
+        vo.setEvidenceRequired(entity.getEvidenceRequired());
         vo.setEnableThinking(entity.getEnableThinking());
         vo.setSystemPrompt(entity.getSystemPrompt());
         vo.setStatus(entity.getStatus());
@@ -214,10 +231,20 @@ public class AgentServiceImpl implements IAgentService {
         return list == null ? new ArrayList<>() : list;
     }
 
+    private void validateScenarioConfiguration(Agent entity) {
+        if (!AgentScenarioCode.isSupported(entity.getScenarioCode())) {
+            throw new ServiceException("不支持的智能体场景: " + entity.getScenarioCode());
+        }
+        if (!AgentExecutionMode.isSupported(entity.getExecutionMode())) {
+            throw new ServiceException("不支持的执行模式: " + entity.getExecutionMode());
+        }
+    }
+
     private LambdaQueryWrapper<Agent> buildQueryWrapper(AgentBo bo) {
         LambdaQueryWrapper<Agent> wrapper = Wrappers.lambdaQuery();
         wrapper.like(StringUtils.hasText(bo.getAgentName()), Agent::getAgentName, bo.getAgentName())
             .like(StringUtils.hasText(bo.getAgentDescribe()), Agent::getAgentDescribe, bo.getAgentDescribe())
+            .eq(StringUtils.hasText(bo.getScenarioCode()), Agent::getScenarioCode, bo.getScenarioCode())
             .eq(StringUtils.hasText(bo.getStatus()), Agent::getStatus, bo.getStatus())
             .eq(bo.getModelId() != null, Agent::getModelId, bo.getModelId())
             .orderByDesc(Agent::getUpdateTime);
