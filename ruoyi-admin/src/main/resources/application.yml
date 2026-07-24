@@ -24,6 +24,19 @@ server:
 chat:
   default-model: deepseek-v4-flash
 
+# 故障诊断固定遥测查询配置
+fault:
+  diagnosis:
+    enabled: true
+    default-window-minutes: 30
+    max-window-minutes: 120
+    nominal-sampling-seconds: 1
+    completeness-threshold: 0.8
+    create-time-buffer-seconds: 10
+    timezone: Asia/Shanghai
+    allowed-assets:
+      - G120-1
+
 captcha:
   # 是否启用验证码校验
   enable: false
