@@ -12,6 +12,7 @@
     <modules>
         <module>ruoyi-aiflow</module>
         <module>ruoyi-chat</module>
+        <module>ruoyi-fault</module>
         <module>ruoyi-generator</module>
         <module>ruoyi-system</module>
         <module>ruoyi-workflow</module>
