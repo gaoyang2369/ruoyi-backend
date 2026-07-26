@@ -6,17 +6,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
-import org.ruoyi.domain.bo.vector.QueryVectorBo;
 import org.ruoyi.domain.entity.knowledge.KnowledgeAttach;
-import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
-import org.ruoyi.domain.vo.knowledge.KnowledgeRetrievalVo;
+import org.ruoyi.domain.vo.knowledge.KnowledgeFragmentVo;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
+import org.ruoyi.fault.knowledge.FaultKnowledgeRetrievalStatus;
+import org.ruoyi.fault.knowledge.FaultKnowledgeStatus;
 import org.ruoyi.mapper.knowledge.KnowledgeAttachMapper;
-import org.ruoyi.service.knowledge.IKnowledgeInfoService;
-import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
-import org.ruoyi.common.chat.service.chat.IChatModelService;
+import org.ruoyi.mapper.knowledge.KnowledgeFragmentMapper;
 
 import java.util.List;
 
@@ -24,79 +21,90 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 验证 RAG 检索结果到故障领域证据及证据链的映射。 */
+/** 验证字面故障码检索到领域证据和三态结果的映射。 */
 @ExtendWith(MockitoExtension.class)
 class RagFaultKnowledgeAdapterTest {
 
     @Mock
-    private KnowledgeRetrievalService knowledgeRetrievalService;
-    @Mock
-    private IKnowledgeInfoService knowledgeInfoService;
-    @Mock
-    private IChatModelService chatModelService;
+    private KnowledgeFragmentMapper knowledgeFragmentMapper;
     @Mock
     private KnowledgeAttachMapper knowledgeAttachMapper;
     @InjectMocks
     private RagFaultKnowledgeAdapter adapter;
 
     @Test
-    void mapsExactRagHitAndWritesEvidenceChain() {
-        KnowledgeInfoVo knowledgeBase = new KnowledgeInfoVo();
-        knowledgeBase.setEmbeddingModel("embedding-model");
-        knowledgeBase.setVectorModel("qdrant");
-        knowledgeBase.setRetrieveLimit(5);
-        ChatModelVo embeddingModel = new ChatModelVo();
-        embeddingModel.setApiKey("test-key");
-        embeddingModel.setApiHost("https://embedding.example");
-        KnowledgeRetrievalVo retrieved = new KnowledgeRetrievalVo();
-        retrieved.setId("fragment-7");
-        retrieved.setDocId("manual-g120");
-        retrieved.setIdx(7);
-        retrieved.setScore(0.93D);
-        retrieved.setContent("F30005：I²t 变频器过载。");
+    void returnsMatchedForKnownFaultCode() {
+        KnowledgeFragmentVo fragment = fragment(7L, "manual-g120", "F30005：I²t 变频器过载。");
         KnowledgeAttach attachment = new KnowledgeAttach();
         attachment.setName("SINAMICS G120 操作手册");
-        when(knowledgeInfoService.queryById(9L)).thenReturn(knowledgeBase);
-        when(chatModelService.selectModelByName("embedding-model")).thenReturn(embeddingModel);
-        when(knowledgeRetrievalService.retrieve(any(QueryVectorBo.class))).thenReturn(List.of(retrieved));
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(9L, "F30005", 20)).thenReturn(List.of(fragment));
         when(knowledgeAttachMapper.selectOne(any())).thenReturn(attachment);
 
         FaultKnowledgeResult result = adapter.query(new FaultKnowledgeQuery("F30005", "G120", List.of(9L)));
 
+        assertEquals(FaultKnowledgeStatus.MATCHED, result.status());
         assertTrue(result.matched());
-        assertEquals("F30005", result.faultCode());
         assertEquals("manual-g120", result.evidence().get(0).documentId());
-        assertEquals("fragment-7", result.evidence().get(0).fragmentId());
+        assertEquals("7", result.evidence().get(0).fragmentId());
         assertEquals("SINAMICS G120 操作手册", result.evidence().get(0).sourceDocument());
-        assertEquals(0.93D, result.evidence().get(0).score());
-        assertTrue(result.evidence().get(0).exactCodeMatched());
         assertTrue(result.evidence().get(0).contentHash().startsWith("sha256:"));
-        assertEquals(1, result.evidenceChain().retrievals().size());
-        ArgumentCaptor<QueryVectorBo> requestCaptor = ArgumentCaptor.forClass(QueryVectorBo.class);
-        verify(knowledgeRetrievalService).retrieve(requestCaptor.capture());
-        assertEquals("G120 F30005", requestCaptor.getValue().getQuery());
-        assertEquals("9", requestCaptor.getValue().getKid());
+        ArgumentCaptor<String> faultCodeCaptor = ArgumentCaptor.forClass(String.class);
+        verify(knowledgeFragmentMapper).searchByLiteralFaultCode(eq(9L), faultCodeCaptor.capture(), eq(20));
+        assertEquals("F30005", faultCodeCaptor.getValue());
     }
 
     @Test
-    void preservesSimilarCodeInTraceButDoesNotMakeItEvidence() {
-        KnowledgeInfoVo knowledgeBase = new KnowledgeInfoVo();
-        knowledgeBase.setEmbeddingModel("embedding-model");
-        ChatModelVo embeddingModel = new ChatModelVo();
-        KnowledgeRetrievalVo retrieved = new KnowledgeRetrievalVo();
-        retrieved.setSourceName("SINAMICS G120 操作手册");
-        retrieved.setContent("F99999A：相邻故障码说明。");
-        when(knowledgeInfoService.queryById(9L)).thenReturn(knowledgeBase);
-        when(chatModelService.selectModelByName("embedding-model")).thenReturn(embeddingModel);
-        when(knowledgeRetrievalService.retrieve(any(QueryVectorBo.class))).thenReturn(List.of(retrieved));
+    void returnsNotFoundForUnknownFaultCodeAfterSuccessfulQuery() {
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(9L, "F99999", 20)).thenReturn(List.of());
 
         FaultKnowledgeResult result = adapter.query(new FaultKnowledgeQuery("F99999", "G120", List.of(9L)));
 
+        assertEquals(FaultKnowledgeStatus.NOT_FOUND, result.status());
         assertFalse(result.matched());
         assertTrue(result.evidence().isEmpty());
-        assertFalse(result.evidenceChain().retrievals().get(0).exactCodeMatched());
+    }
+
+    @Test
+    void returnsFailedWhenEveryKnowledgeBaseQueryFails() {
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(any(), eq("F99999"), any()))
+            .thenThrow(new IllegalStateException("database unavailable"));
+
+        FaultKnowledgeResult result = adapter.query(new FaultKnowledgeQuery("F99999", "G120", List.of(9L, 10L)));
+
+        assertEquals(FaultKnowledgeStatus.FAILED, result.status());
+        assertEquals("FAULT_KNOWLEDGE_RETRIEVAL_FAILED", result.errorCode());
+        assertEquals("故障知识查询暂不可用，请稍后重试", result.errorMessage());
+        assertTrue(result.evidenceChain().retrievals().stream()
+            .allMatch(trace -> trace.status() == FaultKnowledgeRetrievalStatus.FAILED));
+    }
+
+    @Test
+    void keepsSearchingWhenOneKnowledgeBaseFailsAndAnotherMatches() {
+        KnowledgeFragmentVo fragment = fragment(8L, "manual-g120", "F30005：I²t 变频器过载。");
+        KnowledgeAttach attachment = new KnowledgeAttach();
+        attachment.setName("SINAMICS G120 操作手册");
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(9L, "F30005", 20))
+            .thenThrow(new IllegalStateException("database unavailable"));
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(10L, "F30005", 20)).thenReturn(List.of(fragment));
+        when(knowledgeAttachMapper.selectOne(any())).thenReturn(attachment);
+
+        FaultKnowledgeResult result = adapter.query(new FaultKnowledgeQuery("F30005", "G120", List.of(9L, 10L)));
+
+        assertEquals(FaultKnowledgeStatus.MATCHED, result.status());
+        assertEquals(2, result.evidenceChain().retrievals().size());
+        assertEquals(FaultKnowledgeRetrievalStatus.FAILED, result.evidenceChain().retrievals().get(0).status());
+    }
+
+    private KnowledgeFragmentVo fragment(Long id, String docId, String content) {
+        KnowledgeFragmentVo fragment = new KnowledgeFragmentVo();
+        fragment.setId(id);
+        fragment.setDocId(docId);
+        fragment.setIdx(7);
+        fragment.setContent(content);
+        return fragment;
     }
 }

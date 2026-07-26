@@ -42,4 +42,19 @@ public interface KnowledgeFragmentMapper extends BaseMapperPlus<KnowledgeFragmen
             "LIMIT #{limit}" +
             "</script>")
     List<KnowledgeFragmentVo> searchByKeyword(@Param("knowledgeId") Long knowledgeId, @Param("query") String query, @Param("limit") Integer limit);
+
+    /**
+     * 故障码的受控字面候选检索。调用方只能提供知识库、故障码和数量，不可传入 SQL。
+     */
+    @Select("""
+        SELECT id, doc_id AS docId, content, idx, knowledge_id AS knowledgeId
+        FROM knowledge_fragment
+        WHERE knowledge_id = #{knowledgeId}
+          AND content LIKE CONCAT('%', #{faultCode}, '%')
+        ORDER BY id ASC
+        LIMIT #{limit}
+        """)
+    List<KnowledgeFragmentVo> searchByLiteralFaultCode(@Param("knowledgeId") Long knowledgeId,
+                                                        @Param("faultCode") String faultCode,
+                                                        @Param("limit") Integer limit);
 }

@@ -20,7 +20,7 @@ class FaultDiagnosisOrchestratorTest {
         FaultKnowledgePort port = mock(FaultKnowledgePort.class);
         FaultDiagnosisOrchestrator orchestrator = new FaultDiagnosisOrchestrator(port);
         FaultKnowledgeQuery query = new FaultKnowledgeQuery("F30005", "G120", List.of(9L));
-        FaultKnowledgeResult expected = FaultKnowledgeResult.unmatched(query, List.of());
+        FaultKnowledgeResult expected = FaultKnowledgeResult.notFound(query, List.of());
         when(port.query(query)).thenReturn(expected);
 
         FaultKnowledgeResult actual = orchestrator.queryFaultKnowledge(query);

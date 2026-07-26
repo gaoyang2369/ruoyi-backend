@@ -14,7 +14,8 @@ public final class FaultCodeExactMatcher {
         if (content == null || content.isBlank() || faultCode == null || faultCode.isBlank()) {
             return false;
         }
-        Pattern pattern = Pattern.compile("(?<![A-Z0-9])" + Pattern.quote(faultCode.trim()) + "(?![A-Z0-9])",
+        String normalizedFaultCode = faultCode.trim().toUpperCase(java.util.Locale.ROOT);
+        Pattern pattern = Pattern.compile("(?<![A-Z0-9_-])" + Pattern.quote(normalizedFaultCode) + "(?![A-Z0-9_-])",
             Pattern.CASE_INSENSITIVE);
         return pattern.matcher(content).find();
     }

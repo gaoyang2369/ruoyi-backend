@@ -1,7 +1,7 @@
 package org.ruoyi.fault.knowledge;
 
 /**
- * 一条 RAG 候选片段的证据链记录；即使未精确命中也会被保留以便审计。
+ * 一条知识库候选片段的内存检索轨迹；即使未精确命中也会被保留以便审计。
  */
 public record FaultKnowledgeRetrievalTrace(
     Long knowledgeBaseId,
@@ -10,9 +10,9 @@ public record FaultKnowledgeRetrievalTrace(
     String sourceDocument,
     String fragmentId,
     Integer fragmentIndex,
-    Double score,
     String contentHash,
     boolean exactCodeMatched,
-    String retrievalError
+    FaultKnowledgeRetrievalStatus status,
+    String errorCode
 ) {
 }

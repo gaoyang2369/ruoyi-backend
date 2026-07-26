@@ -9,9 +9,7 @@ public record FaultKnowledgeEvidence(
     String sourceDocument,
     String fragmentId,
     Integer fragmentIndex,
-    Double score,
     String contentHash,
-    boolean exactCodeMatched,
     String content
 ) {
 }

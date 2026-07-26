@@ -2,6 +2,7 @@ package org.ruoyi.service.fault;
 
 import lombok.RequiredArgsConstructor;
 import org.ruoyi.common.core.exception.ServiceException;
+import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.service.agent.IAgentService;
@@ -24,6 +25,20 @@ public class AgentFaultKnowledgeQueryFactory {
         if (agent == null) {
             throw new ServiceException("故障诊断Agent不存在: " + agentId);
         }
-        return new FaultKnowledgeQuery(faultCode, deviceModel, agent.getKnowledgeIds());
+        if (!"0".equals(agent.getStatus())) {
+            throw new ServiceException("故障诊断Agent未启用: " + agentId);
+        }
+        if (!AgentScenarioCode.FAULT_DIAGNOSIS.name().equals(agent.getScenarioCode())) {
+            throw new ServiceException("Agent不是故障诊断场景: " + agentId);
+        }
+        if (agent.getKnowledgeIds() == null || agent.getKnowledgeIds().isEmpty()) {
+            throw new ServiceException("故障诊断Agent未绑定知识库: " + agentId);
+        }
+        try {
+            return new FaultKnowledgeQuery(FaultKnowledgeQuery.normalizeFaultCode(faultCode), deviceModel,
+                agent.getKnowledgeIds());
+        } catch (IllegalArgumentException e) {
+            throw new ServiceException(e.getMessage());
+        }
     }
 }
