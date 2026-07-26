@@ -9,7 +9,6 @@ public record FaultKnowledgeEvidence(
     String sourceDocument,
     String fragmentId,
     Integer fragmentIndex,
-    String contentHash,
     String content
 ) {
 }

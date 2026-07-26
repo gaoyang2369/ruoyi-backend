@@ -32,10 +32,9 @@ class AgentFaultKnowledgeQueryFactoryTest {
         agent.setKnowledgeIds(List.of(9L, 10L));
         when(agentService.queryById(7L)).thenReturn(agent);
 
-        FaultKnowledgeQuery query = queryFactory.fromAgent(7L, "G120", " f30005 ");
+        FaultKnowledgeQuery query = queryFactory.fromAgent(7L, " f30005 ");
 
         assertEquals("F30005", query.faultCode());
-        assertEquals("G120", query.deviceModel());
         assertEquals(List.of(9L, 10L), query.knowledgeBaseIds());
     }
 
@@ -45,7 +44,14 @@ class AgentFaultKnowledgeQueryFactoryTest {
         agent.setStatus("1");
         when(agentService.queryById(7L)).thenReturn(agent);
 
-        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "G120", "F30005"));
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005"));
+    }
+
+    @Test
+    void rejectsMissingAgent() {
+        when(agentService.queryById(7L)).thenReturn(null);
+
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005"));
     }
 
     @Test
@@ -54,7 +60,7 @@ class AgentFaultKnowledgeQueryFactoryTest {
         agent.setScenarioCode(AgentScenarioCode.GENERAL_CHAT.name());
         when(agentService.queryById(7L)).thenReturn(agent);
 
-        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "G120", "F30005"));
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005"));
     }
 
     @Test
@@ -63,7 +69,14 @@ class AgentFaultKnowledgeQueryFactoryTest {
         agent.setKnowledgeIds(List.of());
         when(agentService.queryById(7L)).thenReturn(agent);
 
-        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "G120", "F30005"));
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005"));
+    }
+
+    @Test
+    void rejectsInvalidFaultCode() {
+        when(agentService.queryById(7L)).thenReturn(enabledFaultDiagnosisAgent());
+
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005!"));
     }
 
     private AgentVo enabledFaultDiagnosisAgent() {

@@ -47,11 +47,15 @@ public interface KnowledgeFragmentMapper extends BaseMapperPlus<KnowledgeFragmen
      * 故障码的受控字面候选检索。调用方只能提供知识库、故障码和数量，不可传入 SQL。
      */
     @Select("""
-        SELECT id, doc_id AS docId, content, idx, knowledge_id AS knowledgeId
-        FROM knowledge_fragment
-        WHERE knowledge_id = #{knowledgeId}
-          AND content LIKE CONCAT('%', #{faultCode}, '%')
-        ORDER BY id ASC
+        SELECT fragment.id, fragment.doc_id AS docId, fragment.content, fragment.idx,
+               fragment.knowledge_id AS knowledgeId, attachment.name AS sourceDocument
+        FROM knowledge_fragment fragment
+        LEFT JOIN knowledge_attach attachment
+               ON attachment.knowledge_id = fragment.knowledge_id
+              AND attachment.doc_id = fragment.doc_id
+        WHERE fragment.knowledge_id = #{knowledgeId}
+          AND UPPER(fragment.content) LIKE CONCAT('%', UPPER(#{faultCode}), '%')
+        ORDER BY fragment.id ASC
         LIMIT #{limit}
         """)
     List<KnowledgeFragmentVo> searchByLiteralFaultCode(@Param("knowledgeId") Long knowledgeId,

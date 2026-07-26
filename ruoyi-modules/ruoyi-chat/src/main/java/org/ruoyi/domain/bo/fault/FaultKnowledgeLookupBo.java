@@ -11,8 +11,6 @@ public class FaultKnowledgeLookupBo {
     @NotNull(message = "Agent ID不能为空")
     private Long agentId;
 
-    private String deviceModel;
-
     @NotBlank(message = "故障码不能为空")
     private String faultCode;
 }

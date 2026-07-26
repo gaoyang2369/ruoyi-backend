@@ -17,7 +17,7 @@ public class AgentFaultKnowledgeQueryFactory {
 
     private final IAgentService agentService;
 
-    public FaultKnowledgeQuery fromAgent(Long agentId, String deviceModel, String faultCode) {
+    public FaultKnowledgeQuery fromAgent(Long agentId, String faultCode) {
         if (agentId == null) {
             throw new ServiceException("Agent ID不能为空");
         }
@@ -35,8 +35,7 @@ public class AgentFaultKnowledgeQueryFactory {
             throw new ServiceException("故障诊断Agent未绑定知识库: " + agentId);
         }
         try {
-            return new FaultKnowledgeQuery(FaultKnowledgeQuery.normalizeFaultCode(faultCode), deviceModel,
-                agent.getKnowledgeIds());
+            return new FaultKnowledgeQuery(FaultKnowledgeQuery.normalizeFaultCode(faultCode), agent.getKnowledgeIds());
         } catch (IllegalArgumentException e) {
             throw new ServiceException(e.getMessage());
         }

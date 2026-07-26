@@ -58,5 +58,9 @@ public class KnowledgeFragmentVo implements Serializable {
      */
     private Long knowledgeId;
 
+    /**
+     * 来源附件名称；故障码字面查询通过 LEFT JOIN 一并返回，允许为空。
+     */
+    private String sourceDocument;
 
 }
