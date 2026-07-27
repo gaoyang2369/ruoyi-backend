@@ -50,6 +50,7 @@ import org.ruoyi.common.chat.enums.RoleType;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.chat.service.chat.IChatService;
 import org.ruoyi.common.chat.service.workFlow.IWorkFlowStarterService;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.ObjectUtils;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.common.satoken.utils.LoginHelper;
@@ -57,6 +58,7 @@ import org.ruoyi.common.sse.core.SseEmitterManager;
 import org.ruoyi.common.sse.utils.SseMessageUtils;
 import org.ruoyi.config.agent.SkillsPathResolver;
 import org.ruoyi.domain.bo.vector.QueryVectorBo;
+import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
 import org.ruoyi.factory.ChatServiceFactory;
@@ -67,6 +69,7 @@ import org.ruoyi.service.agent.IAgentService;
 import org.ruoyi.service.chat.AbstractChatService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.chat.impl.memory.PersistentChatMemoryStore;
+import org.ruoyi.service.fault.FaultDiagnosisChatService;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
@@ -119,6 +122,8 @@ public class ChatServiceFacade implements IChatService {
 
     private final LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
 
+    private final FaultDiagnosisChatService faultDiagnosisChatService;
+
     /**
      * 内存实例缓存，避免同一会话重复创建
      * Key: sessionId, Value: MessageWindowChatMemory实例
@@ -138,43 +143,21 @@ public class ChatServiceFacade implements IChatService {
         // 4. 具体的服务实现
         Long userId = LoginHelper.getUserId();
         String tokenValue = StpUtil.getTokenValue();
+        String tenantId = LoginHelper.getTenantId();
         SseEmitter emitter = sseEmitterManager.connect(userId, tokenValue);
 
-        // 0. 智能体解析：传入 agentId 时按智能体绑定的模型覆盖 model 字段
-        //    （前端默认走智能体；enableThinking 不再作为对话模式开关，Supervisor 多 Agent 编排成为默认智能体路径）
+        // 路由需要先解析 Agent；模型、上下文和 RAG 只在通用 Agent 路径中解析。
         AgentVo agentVo = null;
         if (chatRequest.getAgentId() != null) {
             agentVo = agentService.queryById(chatRequest.getAgentId());
-            if (agentVo != null && agentVo.getModelId() != null) {
-                ChatModelVo agentModel = chatModelService.queryById(agentVo.getModelId());
-                if (agentModel != null) {
-                    chatRequest.setModel(agentModel.getModelName());
-                }
-            } else {
-                log.warn("智能体不存在或未配置模型，回退到 model 字段: agentId={}", chatRequest.getAgentId());
-            }
         }
-
-        // 1. 根据模型名称查询完整配置
-        ChatModelVo chatModelVo = chatModelService.selectModelByName(chatRequest.getModel());
-        if (chatModelVo == null) {
-            throw new IllegalArgumentException("模型不存在: " + chatRequest.getModel());
-        }
-
-        // 2. 构建上下文消息列表
-        List<ChatMessage> contextMessages = buildContextMessages(chatRequest, agentVo);
 
         chatRequest.setEmitter(emitter);
         chatRequest.setUserId(userId);
         chatRequest.setTokenValue(tokenValue);
-        chatRequest.setChatModelVo(chatModelVo);
-        chatRequest.setContextMessages(contextMessages);
-
-        // 保存用户消息
-        chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), chatRequest.getContent(), RoleType.USER.getName(), chatRequest.getModel());
 
         // 3. 路由对话模式：工作流对话 / 智能体对话（两者均返回各自的 SseEmitter）
-        return handleSpecialChatModes(chatRequest, agentVo);
+        return handleSpecialChatModes(chatRequest, agentVo, tenantId);
     }
 
     /**
@@ -184,13 +167,18 @@ public class ChatServiceFacade implements IChatService {
      * @param agentVo    智能体配置（可为 null）
      * @return 对应模式的 SseEmitter
      */
-    private SseEmitter handleSpecialChatModes(ChatRequest chatRequest, AgentVo agentVo) {
+    SseEmitter handleSpecialChatModes(ChatRequest chatRequest, AgentVo agentVo, String tenantId) {
         // 模式1：工作流对话（前端应用市场选工作流后携带 workFlowRunner）
         if (Boolean.TRUE.equals(chatRequest.getEnableWorkFlow())) {
             log.info("处理工作流对话,会话: {}", chatRequest.getSessionId());
+            saveUserMessage(chatRequest);
             WorkFlowRunner runner = chatRequest.getWorkFlowRunner();
             if (ObjectUtils.isEmpty(runner)) {
                 log.warn("工作流参数为空");
+                SseMessageUtils.sendError(chatRequest.getUserId(), "工作流参数不能为空");
+                SseMessageUtils.sendDone(chatRequest.getUserId());
+                SseMessageUtils.completeConnection(chatRequest.getUserId(), chatRequest.getTokenValue());
+                return chatRequest.getEmitter();
             }
             return workFlowStarterService.streaming(
                 ThreadContext.getCurrentUser(),
@@ -199,8 +187,70 @@ public class ChatServiceFacade implements IChatService {
                 chatRequest.getSessionId()
             );
         }
+        // FAULT_DIAGNOSIS + 非 DETERMINISTIC 必须进入确定性路径并报配置错误，不能回退 Supervisor。
+        if (isFaultDiagnosisAgent(agentVo)) {
+            saveUserMessage(chatRequest);
+            return handleFaultDiagnosisChat(chatRequest, agentVo, tenantId);
+        }
         // 模式2：智能体对话（默认走 Supervisor 多 Agent 编排）
+        prepareGeneralAgentChat(chatRequest, agentVo);
+        saveUserMessage(chatRequest);
         return handleAgentChat(chatRequest, agentVo);
+    }
+
+    private void saveUserMessage(ChatRequest chatRequest) {
+        chatMessageService.saveChatMessage(chatRequest.getUserId(), chatRequest.getSessionId(), chatRequest.getContent(),
+            RoleType.USER.getName(), chatRequest.getModel());
+    }
+
+    /** 仅按场景隔离诊断路由，执行方式由 FaultDiagnosisChatService 校验。 */
+    private boolean isFaultDiagnosisAgent(AgentVo agentVo) {
+        return agentVo != null && AgentScenarioCode.FAULT_DIAGNOSIS.name().equals(agentVo.getScenarioCode());
+    }
+
+    /** 通用 Agent 路径才需要模型解析、上下文和知识库 RAG。 */
+    private void prepareGeneralAgentChat(ChatRequest chatRequest, AgentVo agentVo) {
+        if (agentVo != null && agentVo.getModelId() != null) {
+            ChatModelVo agentModel = chatModelService.queryById(agentVo.getModelId());
+            if (agentModel != null) {
+                chatRequest.setModel(agentModel.getModelName());
+            }
+        } else if (chatRequest.getAgentId() != null) {
+            log.warn("智能体不存在或未配置模型，回退到 model 字段: agentId={}", chatRequest.getAgentId());
+        }
+        ChatModelVo chatModelVo = chatModelService.selectModelByName(chatRequest.getModel());
+        if (chatModelVo == null) {
+            throw new IllegalArgumentException("模型不存在: " + chatRequest.getModel());
+        }
+        chatRequest.setChatModelVo(chatModelVo);
+        chatRequest.setContextMessages(buildContextMessages(chatRequest, agentVo));
+    }
+
+    /**
+     * 确定性诊断 SSE 生命周期与通用 Agent 一致，但绝不构建模型、MCP、Skills 或 Supervisor。
+     */
+    private SseEmitter handleFaultDiagnosisChat(ChatRequest chatRequest, AgentVo agentVo, String tenantId) {
+        Long userId = chatRequest.getUserId();
+        String tokenValue = chatRequest.getTokenValue();
+        CompletableFuture.runAsync(() -> {
+            try {
+                String result = faultDiagnosisChatService.diagnose(chatRequest, agentVo, userId, tenantId);
+                SseMessageUtils.sendContent(userId, result);
+                SseMessageUtils.sendDone(userId);
+                if (StringUtils.isNotBlank(result)) {
+                    chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), result,
+                        RoleType.ASSISTANT.getName(), chatRequest.getModel());
+                }
+            } catch (ServiceException e) {
+                SseMessageUtils.sendError(userId, e.getMessage());
+            } catch (Exception e) {
+                log.error("故障诊断执行失败", e);
+                SseMessageUtils.sendError(userId, "故障诊断执行失败，请稍后重试");
+            } finally {
+                SseMessageUtils.completeConnection(userId, tokenValue);
+            }
+        });
+        return chatRequest.getEmitter();
     }
 
     /**

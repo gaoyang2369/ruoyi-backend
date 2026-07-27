@@ -80,6 +80,11 @@ public class ChatRequest {
     private Boolean enableThinking = false;
 
     /**
+     * 确定性故障诊断的结构化输入；仅在故障诊断 Agent 场景下使用。
+     */
+    private FaultDiagnosisChatInput faultDiagnosis;
+
+    /**
      * 对话模型详情
      */
     private ChatModelVo chatModelVo;
