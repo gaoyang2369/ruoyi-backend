@@ -146,18 +146,22 @@ public class ChatServiceFacade implements IChatService {
         String tenantId = LoginHelper.getTenantId();
         SseEmitter emitter = sseEmitterManager.connect(userId, tokenValue);
 
-        // 路由需要先解析 Agent；模型、上下文和 RAG 只在通用 Agent 路径中解析。
-        AgentVo agentVo = null;
-        if (chatRequest.getAgentId() != null) {
-            agentVo = agentService.queryById(chatRequest.getAgentId());
-        }
-
         chatRequest.setEmitter(emitter);
         chatRequest.setUserId(userId);
         chatRequest.setTokenValue(tokenValue);
-
-        // 3. 路由对话模式：工作流对话 / 智能体对话（两者均返回各自的 SseEmitter）
-        return handleSpecialChatModes(chatRequest, agentVo, tenantId);
+        try {
+            // 路由需要先解析 Agent；模型、上下文和 RAG 只在通用 Agent 路径中解析。
+            AgentVo agentVo = chatRequest.getAgentId() == null ? null : agentService.queryById(chatRequest.getAgentId());
+            return handleSpecialChatModes(chatRequest, agentVo, tenantId);
+        } catch (ServiceException e) {
+            SseMessageUtils.sendError(userId, e.getMessage());
+        } catch (Exception e) {
+            log.error("聊天同步准备失败", e);
+            SseMessageUtils.sendError(userId, "聊天准备失败，请稍后重试");
+        }
+        SseMessageUtils.sendDone(userId);
+        SseMessageUtils.completeConnection(userId, tokenValue);
+        return emitter;
     }
 
     /**
@@ -189,8 +193,9 @@ public class ChatServiceFacade implements IChatService {
         }
         // FAULT_DIAGNOSIS + 非 DETERMINISTIC 必须进入确定性路径并报配置错误，不能回退 Supervisor。
         if (isFaultDiagnosisAgent(agentVo)) {
+            ChatModel faultModel = prepareFaultDiagnosisChatModel(chatRequest, agentVo);
             saveUserMessage(chatRequest);
-            return handleFaultDiagnosisChat(chatRequest, agentVo, tenantId);
+            return handleFaultDiagnosisChat(chatRequest, agentVo, faultModel, tenantId);
         }
         // 模式2：智能体对话（默认走 Supervisor 多 Agent 编排）
         prepareGeneralAgentChat(chatRequest, agentVo);
@@ -226,26 +231,39 @@ public class ChatServiceFacade implements IChatService {
         chatRequest.setContextMessages(buildContextMessages(chatRequest, agentVo));
     }
 
+    /** 故障路径只构建 Agent 明确绑定的同步模型，绝不装配通用 RAG 或工具。 */
+    private ChatModel prepareFaultDiagnosisChatModel(ChatRequest chatRequest, AgentVo agentVo) {
+        if (agentVo == null || agentVo.getModelId() == null) {
+            throw new ServiceException("故障诊断Agent未配置模型");
+        }
+        ChatModelVo model = chatModelService.queryById(agentVo.getModelId());
+        if (model == null) throw new ServiceException("故障诊断Agent绑定的模型不存在");
+        chatRequest.setModel(model.getModelName());
+        return chatServiceFactory.getOriginalService(model.getProviderCode()).buildChatModel(model);
+    }
+
     /**
      * 确定性诊断 SSE 生命周期与通用 Agent 一致，但绝不构建模型、MCP、Skills 或 Supervisor。
      */
-    private SseEmitter handleFaultDiagnosisChat(ChatRequest chatRequest, AgentVo agentVo, String tenantId) {
+    private SseEmitter handleFaultDiagnosisChat(ChatRequest chatRequest, AgentVo agentVo, ChatModel faultModel, String tenantId) {
         Long userId = chatRequest.getUserId();
         String tokenValue = chatRequest.getTokenValue();
         CompletableFuture.runAsync(() -> {
             try {
-                String result = faultDiagnosisChatService.diagnose(chatRequest, agentVo, userId, tenantId);
+                String result = faultDiagnosisChatService.diagnose(chatRequest, agentVo, faultModel, userId, tenantId);
                 SseMessageUtils.sendContent(userId, result);
-                SseMessageUtils.sendDone(userId);
                 if (StringUtils.isNotBlank(result)) {
                     chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), result,
                         RoleType.ASSISTANT.getName(), chatRequest.getModel());
                 }
+                SseMessageUtils.sendDone(userId);
             } catch (ServiceException e) {
                 SseMessageUtils.sendError(userId, e.getMessage());
+                SseMessageUtils.sendDone(userId);
             } catch (Exception e) {
                 log.error("故障诊断执行失败", e);
                 SseMessageUtils.sendError(userId, "故障诊断执行失败，请稍后重试");
+                SseMessageUtils.sendDone(userId);
             } finally {
                 SseMessageUtils.completeConnection(userId, tokenValue);
             }
@@ -450,6 +468,12 @@ public class ChatServiceFacade implements IChatService {
      */
     @Override
     public void chat(ChatRequest chatRequest, StreamingChatResponseHandler externalHandler) {
+        if (chatRequest.getAgentId() != null) {
+            AgentVo agent = agentService.queryById(chatRequest.getAgentId());
+            if (isFaultDiagnosisAgent(agent)) {
+                throw new ServiceException("故障诊断Agent不支持直接流式模型入口，请使用统一聊天入口");
+            }
+        }
         // 1. 根据模型名称查询完整配置
         ChatModelVo chatModelVo = chatModelService.selectModelByName(chatRequest.getModel());
         if (chatModelVo == null) {

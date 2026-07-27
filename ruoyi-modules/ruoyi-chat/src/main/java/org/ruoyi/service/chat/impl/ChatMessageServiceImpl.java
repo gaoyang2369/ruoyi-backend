@@ -165,6 +165,25 @@ public class ChatMessageServiceImpl implements IChatMessageService {
         return chatMessageList;
     }
 
+    @Override
+    public List<dev.langchain4j.data.message.ChatMessage> getMessagesBySessionIdAndUserId(Long sessionId, Long userId,
+                                                                                             int maxMessages) {
+        if (sessionId == null || userId == null || maxMessages <= 0) {
+            return List.of();
+        }
+        ChatMessageBo bo = new ChatMessageBo();
+        bo.setSessionId(sessionId);
+        bo.setUserId(userId);
+        List<ChatMessageVo> values = queryList(bo);
+        int from = Math.max(0, values.size() - maxMessages);
+        List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+        for (ChatMessageVo value : values.subList(from, values.size())) {
+            if ("user".equals(value.getRole())) messages.add(UserMessage.from(value.getContent()));
+            else if ("assistant".equals(value.getRole())) messages.add(AiMessage.from(value.getContent()));
+        }
+        return messages;
+    }
+
 
 
     /**

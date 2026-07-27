@@ -1,6 +1,7 @@
 package org.ruoyi.service.fault;
 
 import org.junit.jupiter.api.Test;
+import dev.langchain4j.model.chat.ChatModel;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -23,6 +24,12 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
+import org.ruoyi.fault.application.FaultCodeKnowledgeQueryService;
+import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
+import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
+import org.ruoyi.service.chat.IChatMessageService;
+import org.ruoyi.service.fault.model.FaultRequestPlan;
+import org.ruoyi.service.fault.model.FaultTaskType;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -33,8 +40,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class FaultDiagnosisChatServiceTest {
@@ -43,6 +54,11 @@ class FaultDiagnosisChatServiceTest {
     private FaultDiagnosisOrchestrator faultDiagnosisOrchestrator;
     @Mock
     private FaultDiagnosisProperties faultDiagnosisProperties;
+    @Mock private FaultRequestPlanner faultRequestPlanner;
+    @Mock private FaultAnswerGenerator faultAnswerGenerator;
+    @Mock private FaultAnswerSafetyValidator faultAnswerSafetyValidator;
+    @Mock private FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
+    @Mock private IChatMessageService chatMessageService;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -144,6 +160,32 @@ class FaultDiagnosisChatServiceTest {
         ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
         verify(faultDiagnosisOrchestrator).diagnose(captor.capture());
         assertEquals(List.of(8L), captor.getValue().knowledgeBaseIds());
+    }
+
+    @Test
+    void pureFaultCodeQueryUsesPlannerAndNeverQueriesTelemetry() {
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
+        ChatRequest request = new ChatRequest();
+        request.setContent("F30005 是什么意思");
+        request.setSessionId(9L);
+        AgentVo agent = enabledAgent();
+        agent.setKnowledgeIds(List.of(21L));
+        ChatModel model = org.mockito.Mockito.mock(ChatModel.class);
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.EXPLAIN_FAULT_CODE), null, null, null,
+            null, null, List.of("F30005"), null, List.of());
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(faultCodeKnowledgeQueryService.query("F30005", List.of(21L)))
+            .thenReturn(FaultKnowledgeResult.notFound(new FaultKnowledgeQuery("F30005", List.of(21L))));
+        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn("F30005 是知识查询结果。");
+        when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(true);
+
+        String answer = chatService.diagnose(request, agent, model, 3L, "tenant-a");
+
+        verify(faultRequestPlanner).plan(any(), any(), any(), any(), anyInt(), any(), any(), any());
+        verify(faultDiagnosisOrchestrator, never()).diagnose(any());
+        verify(faultCodeKnowledgeQueryService).query("F30005", List.of(21L));
+        assertTrue(answer.contains("以下故障码仅进行知识查询，未确认在本次遥测范围内出现：F30005"));
     }
 
     private static ChatRequest requestWithTimes() {

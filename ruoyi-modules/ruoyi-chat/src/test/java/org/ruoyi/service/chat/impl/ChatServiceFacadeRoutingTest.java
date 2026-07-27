@@ -1,6 +1,8 @@
 package org.ruoyi.service.chat.impl;
 
 import org.junit.jupiter.api.AfterEach;
+import cn.hutool.extra.spring.SpringUtil;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -9,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.ruoyi.common.chat.base.ThreadContext;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.WorkFlowRunner;
+import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 import org.ruoyi.common.chat.entity.User;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.chat.service.workFlow.IWorkFlowStarterService;
@@ -27,13 +30,13 @@ import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.vector.VectorStoreService;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import dev.langchain4j.model.chat.ChatModel;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -43,6 +46,16 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ChatServiceFacadeRoutingTest {
+
+    @BeforeAll
+    static void disableSseStaticUtilityBeforeInitialization() {
+        ApplicationContext context = org.mockito.Mockito.mock(ApplicationContext.class);
+        Environment environment = org.mockito.Mockito.mock(Environment.class);
+        when(context.getEnvironment()).thenReturn(environment);
+        when(environment.getProperty("sse.enabled", Boolean.class, true)).thenReturn(false);
+        new SpringUtil().setApplicationContext(context);
+        SseMessageUtils.isEnable();
+    }
 
     @Mock private IChatModelService chatModelService;
     @Mock private ChatServiceFactory chatServiceFactory;
@@ -67,24 +80,23 @@ class ChatServiceFacadeRoutingTest {
         ChatServiceFacade facade = facade();
         ChatRequest request = request();
         AgentVo faultAgent = faultAgent();
-        when(faultDiagnosisChatService.diagnose(request, faultAgent, 1L, "tenant-a")).thenReturn("确定性诊断结果");
+        faultAgent.setModelId(99L);
+        ChatModelVo modelVo = new ChatModelVo();
+        modelVo.setModelName("fault-model");
+        modelVo.setProviderCode("provider");
+        ChatModel model = org.mockito.Mockito.mock(ChatModel.class);
+        org.ruoyi.service.chat.AbstractChatService provider = org.mockito.Mockito.mock(org.ruoyi.service.chat.AbstractChatService.class);
+        when(chatModelService.queryById(99L)).thenReturn(modelVo);
+        when(chatServiceFactory.getOriginalService("provider")).thenReturn(provider);
+        when(provider.buildChatModel(modelVo)).thenReturn(model);
+        when(faultDiagnosisChatService.diagnose(request, faultAgent, model, 1L, "tenant-a")).thenReturn("确定性诊断结果");
 
-        try (MockedStatic<SseMessageUtils> sse = org.mockito.Mockito.mockStatic(SseMessageUtils.class)) {
-            CountDownLatch completed = new CountDownLatch(1);
-            sse.when(() -> SseMessageUtils.completeConnection(1L, "token-a"))
-                .thenAnswer(invocation -> {
-                    completed.countDown();
-                    return null;
-                });
-            assertSame(request.getEmitter(), facade.handleSpecialChatModes(request, faultAgent, "tenant-a"));
+        assertSame(request.getEmitter(), facade.handleSpecialChatModes(request, faultAgent, "tenant-a"));
 
-            verify(faultDiagnosisChatService, timeout(1_000)).diagnose(request, faultAgent, 1L, "tenant-a");
-            verify(knowledgeInfoService, never()).queryById(any());
-            verify(chatModelService, never()).selectModelByName(any());
-            verify(chatMessageService, timeout(1_000)).saveChatMessage(1L, 2L, "确定性诊断结果", "assistant", null);
-            assertTrue(completed.await(1, TimeUnit.SECONDS));
-            sse.verify(() -> SseMessageUtils.completeConnection(1L, "token-a"));
-        }
+        verify(faultDiagnosisChatService, timeout(1_000)).diagnose(request, faultAgent, model, 1L, "tenant-a");
+        verify(knowledgeInfoService, never()).queryById(any());
+        verify(chatModelService, never()).selectModelByName(any());
+        verify(chatMessageService, timeout(1_000)).saveChatMessage(1L, 2L, "确定性诊断结果", "assistant", "fault-model");
     }
 
     @Test

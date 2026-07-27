@@ -77,6 +77,12 @@ public interface IChatMessageService {
     List<ChatMessage> getMessagesBySessionId(Long sessionId);
 
     /**
+     * 按会话和所属用户读取最近消息，返回仍按时间（ID）从旧到新排序。
+     * 此方法供需要会话指代的受限规划器使用，不能以空参数扩大查询范围。
+     */
+    List<ChatMessage> getMessagesBySessionIdAndUserId(Long sessionId, Long userId, int maxMessages);
+
+    /**
      * 根据会话ID删除所有消息
      * 用于清理会话历史
      *
