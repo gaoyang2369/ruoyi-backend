@@ -156,7 +156,10 @@ services:
 
   # ==================== RuoYi-AI 用户端前端 ====================
   web-frontend:
-    image: crpi-31mraxd99y2gqdgr.cn-beijing.personal.cr.aliyuncs.com/ruoyi_ai/ruoyi-ai-web:latest
+    image: ruoyi-ai-web:latest
+    build:
+      context: ../../../../ruoyi-web
+      dockerfile: Dockerfile.frontend
     container_name: ruoyi-ai-web
     restart: always
     ports:
