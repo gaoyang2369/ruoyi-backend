@@ -64,24 +64,9 @@ public class SseEmitterManager {
         emitters.put(token, emitter);
 
         // 当 emitter 完成、超时或发生错误时，从映射表中移除对应的 token
-        emitter.onCompletion(() -> {
-            SseEmitter remove = emitters.remove(token);
-            if (remove != null) {
-               remove.complete();
-            }
-        });
-        emitter.onTimeout(() -> {
-            SseEmitter remove = emitters.remove(token);
-            if (remove != null) {
-                remove.complete();
-            }
-        });
-        emitter.onError((e) -> {
-            SseEmitter remove = emitters.remove(token);
-            if (remove != null) {
-                remove.complete();
-            }
-        });
+        emitter.onCompletion(() -> removeEmitter(userId, token, emitter, emitters));
+        emitter.onTimeout(() -> removeEmitter(userId, token, emitter, emitters));
+        emitter.onError(e -> removeEmitter(userId, token, emitter, emitters));
 
         try {
             // 向客户端发送一条连接成功的事件
@@ -105,16 +90,30 @@ public class SseEmitterManager {
         }
         Map<String, SseEmitter> emitters = USER_TOKEN_EMITTERS.get(userId);
         if (MapUtil.isNotEmpty(emitters)) {
-            try {
-                SseEmitter sseEmitter = emitters.get(token);
-                sseEmitter.send(SseEmitter.event().comment("disconnected"));
-                //sseEmitter.complete();
-            } catch (Exception exception) {
-                log.error(exception.getMessage());
+            SseEmitter sseEmitter = emitters.remove(token);
+            if (sseEmitter == null) {
+                return;
             }
-            emitters.remove(token);
+            try {
+                sseEmitter.send(SseEmitter.event().comment("disconnected"));
+            } catch (Exception exception) {
+                log.debug("发送 SSE 断开事件失败, userId: {}, token: {}", userId, token, exception);
+            } finally {
+                // 必须结束 Servlet 异步响应，否则代理可能一直缓冲 content/done 事件，
+                // 直到读取超时后前端才看到消息。
+                sseEmitter.complete();
+                removeEmitter(userId, token, sseEmitter, emitters);
+            }
         } else {
             USER_TOKEN_EMITTERS.remove(userId);
+        }
+    }
+
+    private void removeEmitter(Long userId, String token, SseEmitter emitter,
+                               Map<String, SseEmitter> emitters) {
+        emitters.remove(token, emitter);
+        if (emitters.isEmpty()) {
+            USER_TOKEN_EMITTERS.remove(userId, emitters);
         }
     }
 

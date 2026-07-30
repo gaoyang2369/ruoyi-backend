@@ -1,6 +1,7 @@
 package org.ruoyi.controller.chat;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +32,10 @@ public class ChatController {
      */
     @PostMapping("/send")
     @ResponseBody
-    public SseEmitter sseChat(@RequestBody @Valid ChatRequest chatRequest) {
+    public SseEmitter sseChat(@RequestBody @Valid ChatRequest chatRequest, HttpServletResponse response) {
+        // 禁止浏览器和反向代理缓存/缓冲 SSE，确保每个事件立即转发给前端。
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("X-Accel-Buffering", "no");
         return chatService.sseChat(chatRequest);
     }
 
