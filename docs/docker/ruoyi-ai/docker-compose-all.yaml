@@ -97,7 +97,10 @@ services:
 
   # ==================== RuoYi-AI 后端服务 ====================
   backend:
-    image: crpi-31mraxd99y2gqdgr.cn-beijing.personal.cr.aliyuncs.com/ruoyi_ai/ruoyi-ai-backend:latest
+    image: ruoyi-ai-backend:latest
+    build:
+      context: ../../..
+      dockerfile: docs/docker/ruoyi-ai/Dockerfile.backend
     container_name: ruoyi-ai-backend
     restart: always
     ports:
@@ -118,6 +121,11 @@ services:
       LOGGING_LEVEL_ORG_RUOYI: info
       LOGGING_LEVEL_ORG_SPRINGFRAMEWORK: warn
       SYS_UPLOAD_PATH: /ruoyi/upload
+      # 知识库向量存储配置（必须配置在后端容器）
+      VECTOR_STORE_TYPE: weaviate
+      VECTOR_STORE_WEAVIATE_PROTOCOL: http
+      VECTOR_STORE_WEAVIATE_HOST: weaviate:8080
+      VECTOR_STORE_WEAVIATE_CLASSNAME: LocalKnowledge
     volumes:
       - logs-data:/ruoyi/server/logs
       - upload-data:/ruoyi/upload
