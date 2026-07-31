@@ -44,12 +44,22 @@ public interface KnowledgeFragmentMapper extends BaseMapperPlus<KnowledgeFragmen
     List<KnowledgeFragmentVo> searchByKeyword(@Param("knowledgeId") Long knowledgeId, @Param("query") String query, @Param("limit") Integer limit);
 
     /**
-     * 故障码的受控字面候选检索。调用方只能提供知识库、故障码和数量，不可传入 SQL。
+     * 故障码的受控字面候选检索。命中片段可能在故障条目中途结束，因此只拼接同知识库、
+     * 同文档的下一片段作为有界上下文；业务层还会裁剪到下一个故障码标题之前。
+     * 调用方只能提供知识库、故障码和数量，不可传入 SQL。
      */
     @Select("""
-        SELECT fragment.id, fragment.doc_id AS docId, fragment.content, fragment.idx,
+        SELECT fragment.id, fragment.doc_id AS docId,
+               CONCAT(fragment.content,
+                      CASE WHEN next_fragment.id IS NULL THEN ''
+                           ELSE CONCAT('\n', next_fragment.content) END) AS content,
+               fragment.idx,
                fragment.knowledge_id AS knowledgeId, attachment.name AS sourceDocument
         FROM knowledge_fragment fragment
+        LEFT JOIN knowledge_fragment next_fragment
+               ON next_fragment.knowledge_id = fragment.knowledge_id
+              AND next_fragment.doc_id = fragment.doc_id
+              AND next_fragment.idx = fragment.idx + 1
         LEFT JOIN knowledge_attach attachment
                ON attachment.knowledge_id = fragment.knowledge_id
               AND attachment.doc_id = fragment.doc_id

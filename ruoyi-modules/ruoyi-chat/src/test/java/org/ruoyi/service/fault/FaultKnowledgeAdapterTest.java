@@ -85,6 +85,27 @@ class FaultKnowledgeAdapterTest {
         assertEquals("SINAMICS G120 操作手册", result.evidence().get(0).sourceDocument());
     }
 
+    @Test
+    void keepsFollowingFragmentContextButStopsBeforeNextFaultCode() {
+        KnowledgeFragmentVo fragment = fragment(8L, "manual-s120", """
+            F07560 上一个故障的结尾。
+            F07561 驱动编码器：多圈线数不是二的幂次方。
+            原因：p0421 中的多圈分辨率必须是二的幂次方。
+            处理：检查参数设定，必要时升级编码器模块固件。
+            F07562 下一个故障。
+            """);
+        when(knowledgeFragmentMapper.searchByLiteralFaultCode(9L, "F07561", 20)).thenReturn(List.of(fragment));
+
+        FaultKnowledgeResult result = adapter.query(new FaultKnowledgeQuery("F07561", List.of(9L)));
+
+        String content = result.evidence().get(0).content();
+        assertTrue(content.startsWith("F07561"));
+        assertTrue(content.contains("原因：p0421"));
+        assertTrue(content.contains("处理：检查参数设定"));
+        assertFalse(content.contains("F07560"));
+        assertFalse(content.contains("F07562"));
+    }
+
     private KnowledgeFragmentVo fragment(Long id, String docId, String content) {
         KnowledgeFragmentVo fragment = new KnowledgeFragmentVo();
         fragment.setId(id);

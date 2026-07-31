@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 基于知识片段字面查询实现故障知识端口。
@@ -25,6 +27,8 @@ import java.util.List;
 public class FaultKnowledgeAdapter implements FaultKnowledgePort {
 
     private static final int LITERAL_SEARCH_LIMIT = 20;
+    private static final Pattern FAULT_SECTION_BOUNDARY =
+        Pattern.compile("(?i)(?<![A-Z0-9_-])[AF]\\d{3,}(?![A-Z0-9_-])");
 
     private final KnowledgeFragmentMapper knowledgeFragmentMapper;
 
@@ -65,8 +69,24 @@ public class FaultKnowledgeAdapter implements FaultKnowledgePort {
             if (FaultCodeExactMatcher.matches(candidate.getContent(), query.faultCode())) {
                 evidence.add(new FaultKnowledgeEvidence(knowledgeBaseId, candidate.getDocId(),
                     candidate.getSourceDocument(), String.valueOf(candidate.getId()), candidate.getIdx(),
-                    candidate.getContent()));
+                    extractFaultSection(candidate.getContent(), query.faultCode())));
             }
         }
+    }
+
+    /**
+     * 从“命中片段 + 下一片段”的有界上下文中，仅保留当前故障码条目。
+     */
+    private static String extractFaultSection(String content, String faultCode) {
+        if (content == null || content.isBlank()) return content;
+        Pattern currentCode = Pattern.compile("(?i)(?<![A-Z0-9_-])" + Pattern.quote(faultCode)
+            + "(?![A-Z0-9_-])");
+        Matcher current = currentCode.matcher(content);
+        if (!current.find()) return content;
+        String fromCurrent = content.substring(current.start()).trim();
+        Matcher boundary = FAULT_SECTION_BOUNDARY.matcher(fromCurrent);
+        if (!boundary.find()) return fromCurrent;
+        if (boundary.find()) return fromCurrent.substring(0, boundary.start()).trim();
+        return fromCurrent;
     }
 }
