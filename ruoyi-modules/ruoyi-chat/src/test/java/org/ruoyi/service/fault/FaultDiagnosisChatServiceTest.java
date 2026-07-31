@@ -1,5 +1,8 @@
 package org.ruoyi.service.fault;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import dev.langchain4j.model.chat.ChatModel;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -7,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.FaultDiagnosisChatInput;
 import org.ruoyi.common.core.exception.ServiceException;
@@ -34,6 +38,7 @@ import org.ruoyi.service.fault.model.FaultTaskType;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -189,11 +194,13 @@ class FaultDiagnosisChatServiceTest {
         when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any()))
             .thenThrow(new IllegalStateException("model unavailable"));
 
-        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+        LoggedAnswer result = diagnoseWithLogs(input);
+        String answer = result.answer();
 
         assertTrue(answer.contains(evidence.content()));
         assertTrue(answer.contains("来源：F07561 - S120_故障手册.pdf / fragment-7"));
         assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
+        assertFallbackLog(result.logs(), "MODEL_EXCEPTION");
     }
 
     @Test
@@ -205,11 +212,13 @@ class FaultDiagnosisChatServiceTest {
         when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn("不安全的模型回答");
         when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(false);
 
-        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+        LoggedAnswer result = diagnoseWithLogs(input);
+        String answer = result.answer();
 
         assertTrue(answer.contains(evidence.content()));
         assertFalse(answer.contains("不安全的模型回答"));
         assertTrue(answer.contains("S120_故障手册.pdf"));
+        assertFallbackLog(result.logs(), "SAFETY_VALIDATION_REJECTED");
     }
 
     @Test
@@ -220,11 +229,13 @@ class FaultDiagnosisChatServiceTest {
         PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
         when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn(" ");
 
-        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+        LoggedAnswer result = diagnoseWithLogs(input);
+        String answer = result.answer();
 
         assertTrue(answer.contains(evidence.content()));
         assertTrue(answer.contains("S120_故障手册.pdf"));
         verifyNoInteractions(faultAnswerSafetyValidator);
+        assertFallbackLog(result.logs(), "EMPTY_MODEL_ANSWER");
     }
 
     @Test
@@ -299,7 +310,42 @@ class FaultDiagnosisChatServiceTest {
         return new PureKnowledgeRequest(request, agent, model);
     }
 
+    private LoggedAnswer diagnoseWithLogs(PureKnowledgeRequest input) {
+        return captureLogs(() -> chatService.diagnose(
+            input.request(), input.agent(), input.model(), 3L, "tenant-a"));
+    }
+
+    private static LoggedAnswer captureLogs(Supplier<String> invocation) {
+        Logger logger = (Logger) LoggerFactory.getLogger(FaultDiagnosisChatService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            String answer = invocation.get();
+            List<String> logs = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+            return new LoggedAnswer(answer, logs);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    private static void assertFallbackLog(List<String> logs, String reason) {
+        String message = logs.stream()
+            .filter(item -> item.contains("fallbackReason=" + reason))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("未找到降级日志: " + reason));
+        assertTrue(message.matches(".*requestId=[^,]+,.*"));
+        assertTrue(message.contains("taskType=[EXPLAIN_FAULT_CODE]"));
+        assertTrue(message.contains("faultCode=[F07561]"));
+        assertTrue(message.matches(".*elapsedMs=\\d+,.*"));
+        assertFalse(message.contains("参数 p0421"));
+    }
+
     private record PureKnowledgeRequest(ChatRequest request, AgentVo agent, ChatModel model) {
+    }
+
+    private record LoggedAnswer(String answer, List<String> logs) {
     }
 
     private static DiagnosisResult result(boolean partial, List<EvidenceReference> references,

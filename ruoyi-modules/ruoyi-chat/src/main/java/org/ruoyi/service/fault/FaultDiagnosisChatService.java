@@ -3,6 +3,7 @@ package org.ruoyi.service.fault;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.FaultDiagnosisChatInput;
 import org.ruoyi.common.core.exception.ServiceException;
@@ -45,6 +46,7 @@ import java.util.stream.Collectors;
 /** 聊天层协调器：LLM 只规划/表达，遥测、规则、知识范围和证据均由确定性后端控制。 */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class FaultDiagnosisChatService {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss").withResolverStyle(ResolverStyle.STRICT);
     private final FaultDiagnosisOrchestrator faultDiagnosisOrchestrator;
@@ -63,9 +65,12 @@ public class FaultDiagnosisChatService {
     }
 
     public String diagnose(ChatRequest request, AgentVo agent, ChatModel model, Long userId, String tenantId) {
+        long startNanos = System.nanoTime();
+        String requestId = UUID.randomUUID().toString();
         validateAgent(agent);
-        FaultRequestPlan plan = request.getFaultDiagnosis() == null ? planFromModel(request, model, userId) : planFromInput(request);
-        NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId);
+        FaultRequestPlan plan = request.getFaultDiagnosis() == null
+            ? planFromModel(request, model, userId, requestId) : planFromInput(request);
+        NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) return normalized.clarification();
 
         DiagnosisResult diagnosis = null;
@@ -74,34 +79,65 @@ public class FaultDiagnosisChatService {
         FaultExecutionResult execution = new FaultExecutionResult(normalized.plan(), diagnosis, explicit,
             diagnosis == null ? knowledgeLimitations(normalized.plan(), agent) : diagnosis.limitations());
         if (diagnosis == null && normalized.plan().tasks().contains(FaultTaskType.EXPLAIN_FAULT_CODE)) {
-            return answerKnowledgeQuery(request, agent, model, normalized.plan(), execution);
+            return answerKnowledgeQuery(request, agent, model, normalized.plan(), execution, requestId, startNanos);
         }
-        String body;
-        try {
-            body = faultAnswerGenerator.generate(model, request.getContent(), normalized.plan(), execution,
-                execution.allowedEvidenceCodes(), agent);
-            if (!faultAnswerSafetyValidator.valid(body, execution, diagnosis != null)) throw new IllegalStateException("fault answer safety validation failed");
-        } catch (RuntimeException ex) {
-            body = renderFallback(diagnosis);
-        }
+        String body = generateValidatedAnswer(model, request.getContent(), normalized.plan(), execution, agent,
+            true, requestId, startNanos);
+        if (body == null) body = renderFallback(diagnosis);
         return renderDeterministicFacts(execution) + "\n\n分析说明：\n" + body + appendEvidenceAndSources(execution);
     }
 
     private String answerKnowledgeQuery(ChatRequest request, AgentVo agent, ChatModel model, FaultRequestPlan plan,
-                                        FaultExecutionResult execution) {
+                                        FaultExecutionResult execution, String requestId, long startNanos) {
         Map<String, FaultKnowledgeResult> results = execution.explicitKnowledgeResults();
         String fallback = renderKnowledgeFallback(plan.faultCodes(), results, agent.getKnowledgeIds());
         if (!allKnowledgeMatched(plan.faultCodes(), results)) return fallback;
+        String body = generateValidatedAnswer(model, request.getContent(), plan, execution, agent, false,
+            requestId, startNanos);
+        return body == null ? fallback : renderKnowledgeModelAnswer(plan.faultCodes(), body, results);
+    }
+
+    private String generateValidatedAnswer(ChatModel model, String question, FaultRequestPlan plan,
+                                           FaultExecutionResult execution, AgentVo agent, boolean diagnosisExecuted,
+                                           String requestId, long startNanos) {
+        String body;
         try {
-            String body = faultAnswerGenerator.generate(model, request.getContent(), plan, execution,
+            body = faultAnswerGenerator.generate(model, question, plan, execution,
                 execution.allowedEvidenceCodes(), agent);
-            if (StringUtils.isBlank(body) || !faultAnswerSafetyValidator.valid(body, execution, false)) {
-                throw new IllegalStateException("fault answer safety validation failed");
-            }
-            return renderKnowledgeModelAnswer(plan.faultCodes(), body, results);
         } catch (RuntimeException ex) {
-            return fallback;
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.MODEL_EXCEPTION, ex);
+            return null;
         }
+        if (StringUtils.isBlank(body)) {
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.EMPTY_MODEL_ANSWER, null);
+            return null;
+        }
+        boolean valid;
+        try {
+            valid = faultAnswerSafetyValidator.valid(body, execution, diagnosisExecuted);
+        } catch (RuntimeException ex) {
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.SAFETY_VALIDATION_REJECTED, ex);
+            return null;
+        }
+        if (!valid) {
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.SAFETY_VALIDATION_REJECTED, null);
+            return null;
+        }
+        return body;
+    }
+
+    private static void logFallback(String requestId, FaultRequestPlan plan, FaultExecutionResult execution,
+                                    long startNanos, FallbackReason reason, RuntimeException exception) {
+        Set<String> faultCodes = new LinkedHashSet<>(plan.faultCodes());
+        faultCodes.addAll(execution.observedFaultCodes());
+        log.warn("故障回答进入降级路径: requestId={}, taskType={}, faultCode={}, elapsedMs={}, "
+                + "fallbackReason={}, errorType={}",
+            requestId, plan.tasks(), faultCodes, elapsedMillis(startNanos), reason,
+            exception == null ? "none" : exception.getClass().getSimpleName());
+    }
+
+    private static long elapsedMillis(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     DiagnosisCommand buildCommand(ChatRequest request, AgentVo agent, Long userId, String tenantId) {
@@ -115,10 +151,11 @@ public class FaultDiagnosisChatService {
             StringUtils.isNotBlank(input.getSymptom()) ? input.getSymptom() : request.getContent());
     }
 
-    private FaultRequestPlan planFromModel(ChatRequest request, ChatModel model, Long userId) {
+    private FaultRequestPlan planFromModel(ChatRequest request, ChatModel model, Long userId, String requestId) {
         List<ChatMessage> history = chatMessageService.getMessagesBySessionIdAndUserId(request.getSessionId(), userId, 12);
         return faultRequestPlanner.plan(model, history, now(), faultDiagnosisProperties.getTimezone(),
-            faultDiagnosisProperties.getDefaultWindowMinutes(), faultDiagnosisProperties.getAllowedAssets(), request.getContent(), UUID.randomUUID().toString());
+            faultDiagnosisProperties.getDefaultWindowMinutes(), faultDiagnosisProperties.getAllowedAssets(),
+            request.getContent(), requestId);
     }
 
     private FaultRequestPlan planFromInput(ChatRequest request) {
@@ -127,7 +164,8 @@ public class FaultDiagnosisChatService {
             formatTime(input.getStartTime()), formatTime(input.getEndTime()), List.of(), input.getSymptom(), List.of());
     }
 
-    private NormalizedPlan normalize(FaultRequestPlan proposed, ChatRequest request, AgentVo agent, Long userId, String tenantId) {
+    private NormalizedPlan normalize(FaultRequestPlan proposed, ChatRequest request, AgentVo agent, Long userId,
+                                     String tenantId, String requestId) {
         Set<FaultTaskType> tasks = new LinkedHashSet<>(proposed.tasks());
         if (tasks.isEmpty()) {
             if (StringUtils.isNotBlank(proposed.deviceName()) || StringUtils.isNotBlank(proposed.inverterName()) || proposed.recentMinutes() != null || StringUtils.isNotBlank(proposed.startTime()) || StringUtils.isNotBlank(proposed.symptom())) tasks.add(FaultTaskType.DIAGNOSE);
@@ -144,7 +182,9 @@ public class FaultDiagnosisChatService {
         TimeRange range = timeRange(proposed);
         if (range == null) return NormalizedPlan.clarify("请同时提供开始和结束时间，或提供有效的最近分钟数。");
         FaultRequestPlan plan = new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), formatTime(range.start()), formatTime(range.end()), codes, proposed.symptom(), proposed.requestedAspects());
-        return NormalizedPlan.ready(plan, command(request, agent, userId, tenantId, plan.deviceName(), plan.inverterName(), range.start(), range.end(), StringUtils.isNotBlank(plan.symptom()) ? plan.symptom() : request.getContent()));
+        return NormalizedPlan.ready(plan, command(request, agent, userId, tenantId, plan.deviceName(),
+            plan.inverterName(), range.start(), range.end(),
+            StringUtils.isNotBlank(plan.symptom()) ? plan.symptom() : request.getContent(), requestId));
     }
 
     private TimeRange timeRange(FaultRequestPlan plan) {
@@ -172,8 +212,14 @@ public class FaultDiagnosisChatService {
     }
 
     private DiagnosisCommand command(ChatRequest request, AgentVo agent, Long userId, String tenantId, String device, String inverter, LocalDateTime start, LocalDateTime end, String symptom) {
+        return command(request, agent, userId, tenantId, device, inverter, start, end, symptom,
+            UUID.randomUUID().toString());
+    }
+    private DiagnosisCommand command(ChatRequest request, AgentVo agent, Long userId, String tenantId, String device,
+                                     String inverter, LocalDateTime start, LocalDateTime end, String symptom,
+                                     String requestId) {
         return new DiagnosisCommand(device, inverter, start, end, symptom, agent.getKnowledgeIds() == null ? List.of() : List.copyOf(agent.getKnowledgeIds()),
-            new DiagnosisRequestContext(agent.getId(), request.getSessionId(), userId, tenantId, UUID.randomUUID().toString()));
+            new DiagnosisRequestContext(agent.getId(), request.getSessionId(), userId, tenantId, requestId));
     }
     private LocalDateTime now() { return LocalDateTime.now(ZoneId.of(faultDiagnosisProperties.getTimezone())); }
     private void validateAgent(AgentVo agent) {
@@ -303,6 +349,7 @@ public class FaultDiagnosisChatService {
     private static String formatTime(LocalDateTime value) { return value == null ? "无" : TIME_FORMATTER.format(value); }
     private static String valueOrNone(String value) { return StringUtils.isBlank(value) ? "无" : value; }
     private static String joinOrNone(Set<String> values) { return values == null || values.isEmpty() ? "无" : String.join("、", values); }
+    private enum FallbackReason { MODEL_EXCEPTION, EMPTY_MODEL_ANSWER, SAFETY_VALIDATION_REJECTED }
     private record TimeRange(LocalDateTime start, LocalDateTime end) { }
     private record NormalizedPlan(FaultRequestPlan plan, DiagnosisCommand command, String clarification) { static NormalizedPlan ready(FaultRequestPlan p, DiagnosisCommand c) { return new NormalizedPlan(p, c, null); } static NormalizedPlan clarify(String message) { return new NormalizedPlan(null, null, message); } }
 }
