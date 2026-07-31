@@ -107,6 +107,25 @@ class FaultRequestPlannerTest {
     }
 
     @Test
+    void plansBareFaultCodeWithoutModel() {
+        var plan = planner().plan(null, List.of(), now(), "Asia/Shanghai", 30, List.of(),
+            "F07561", "r10");
+
+        assertEquals(List.of(FaultTaskType.EXPLAIN_FAULT_CODE), plan.tasks());
+        assertEquals(List.of("F07561"), plan.faultCodes());
+        assertEquals(List.of("含义"), plan.requestedAspects());
+    }
+
+    @Test
+    void plansMultipleBareFaultCodesWithoutModel() {
+        var plan = planner().plan(null, List.of(), now(), "Asia/Shanghai", 30, List.of(),
+            "F07561、A30005 和 f10001？", "r11");
+
+        assertEquals(List.of(FaultTaskType.EXPLAIN_FAULT_CODE), plan.tasks());
+        assertEquals(List.of("F07561", "A30005", "F10001"), plan.faultCodes());
+    }
+
+    @Test
     void keepsTelemetryDiagnosisWithFaultCodeOnModelPlanningPath() {
         ChatModel model = model("""
             {"tasks":["DIAGNOSE","EXPLAIN_FAULT_CODE"],"deviceName":"G120","inverterName":"INV-1","faultCodes":["F07561"]}
@@ -116,6 +135,32 @@ class FaultRequestPlannerTest {
             "请诊断G120最近30分钟的运行数据，并解释F07561", "r9");
 
         assertEquals(List.of(FaultTaskType.DIAGNOSE, FaultTaskType.EXPLAIN_FAULT_CODE), plan.tasks());
+        org.mockito.Mockito.verify(model).chat(any(dev.langchain4j.model.chat.request.ChatRequest.class));
+    }
+
+    @Test
+    void keepsAssetContextOnModelPlanningPath() {
+        ChatModel model = model("""
+            {"tasks":["DIAGNOSE","EXPLAIN_FAULT_CODE"],"deviceName":"G120","inverterName":"INV-1","faultCodes":["F07561"]}
+            """);
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120"),
+            "设备 G120 的逆变器 INV-1 出现 F07561，是什么原因？", "r12");
+
+        assertEquals(List.of(FaultTaskType.DIAGNOSE, FaultTaskType.EXPLAIN_FAULT_CODE), plan.tasks());
+        org.mockito.Mockito.verify(model).chat(any(dev.langchain4j.model.chat.request.ChatRequest.class));
+    }
+
+    @Test
+    void keepsExplicitTimeRangeOnModelPlanningPath() {
+        ChatModel model = model("""
+            {"tasks":["DIAGNOSE"],"deviceName":"G120","inverterName":"INV-1","startTime":"2026-07-30 10:00:00","endTime":"2026-07-30 11:00:00"}
+            """);
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120"),
+            "查看 F07561 在 2026-07-30 到 2026-07-31 的情况", "r13");
+
+        assertEquals(List.of(FaultTaskType.DIAGNOSE), plan.tasks());
         org.mockito.Mockito.verify(model).chat(any(dev.langchain4j.model.chat.request.ChatRequest.class));
     }
 

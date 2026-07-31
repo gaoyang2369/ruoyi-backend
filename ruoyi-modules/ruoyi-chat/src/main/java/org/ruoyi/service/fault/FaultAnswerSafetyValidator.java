@@ -23,6 +23,8 @@ public class FaultAnswerSafetyValidator {
     public boolean valid(String answer, FaultExecutionResult execution, boolean diagnosisExecuted) {
         if (!evidenceCitationValidator.valid(answer, execution.allowedEvidenceCodes(), diagnosisExecuted)
             || answer == null || CONFIDENCE.matcher(answer).find()) return false;
+        // 纯知识查询没有读取遥测；模型正文只要提及遥测，就交由确定性答案统一说明边界。
+        if (!diagnosisExecuted && answer.contains("遥测")) return false;
         Set<String> allowed = new java.util.LinkedHashSet<>(execution.observedFaultCodes());
         allowed.addAll(execution.queriedOnlyFaultCodes());
         Matcher codes = F_CODE.matcher(answer.toUpperCase(Locale.ROOT));

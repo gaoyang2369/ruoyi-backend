@@ -25,6 +25,10 @@ class FaultAnswerSafetyValidatorTest {
         assertTrue(validator.valid("本次未检测到 F30005；这里仅说明其知识含义。", queriedOnly, false));
     }
 
+    @Test void rejectsTelemetryNarrativeWhenDiagnosisWasNotExecuted() {
+        assertFalse(validator.valid("本次遥测实际观测到的故障码为空，因此仅说明 F30005。", queriedOnly, false));
+    }
+
     @Test void rejectsInventedFaultCodeAndConfidence() {
         assertFalse(validator.valid("F99999 的故障概率为 0.9", queriedOnly, false));
         assertFalse(validator.valid("F30005 的置信度 80%", queriedOnly, false));

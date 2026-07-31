@@ -37,6 +37,11 @@ public class FaultRequestPlanner {
         Pattern.compile("什么|原因|解决|处理|含义|解释|怎么|如何|排查|说明|意思|办法|措施");
     private static final Pattern TELEMETRY_DIAGNOSIS_INTENT =
         Pattern.compile("诊断|遥测|趋势|波形|运行数据|历史数据|最近\\s*\\d+|过去\\s*\\d+|开始时间|结束时间");
+    private static final Pattern ASSET_CONTEXT = Pattern.compile("设备|逆变器");
+    private static final Pattern EXPLICIT_TIME_RANGE =
+        Pattern.compile("\\d{4}\\s*[-/.年]\\s*\\d{1,2}\\s*[-/.月]\\s*\\d{1,2}");
+    private static final Pattern FAULT_CODE_SEPARATORS =
+        Pattern.compile("[\\s,，、;；/|和及与?？。.!！:：]*");
     private static final int LOG_RESPONSE_LIMIT = 800;
     private static final String SYSTEM = """
         你是故障诊断请求规划器，不负责诊断或回答。只允许 tasks 中的 DIAGNOSE、EXPLAIN_FAULT_CODE，可拆分复合请求。
@@ -47,13 +52,13 @@ public class FaultRequestPlanner {
 
     public FaultRequestPlan plan(ChatModel chatModel, List<ChatMessage> history, LocalDateTime now, String timezone,
                                  int defaultWindowMinutes, List<String> allowedAssets, String question, String requestId) {
-        if (chatModel == null) throw new ServiceException("故障诊断模型不可用");
         FaultRequestPlan deterministic = planExplicitFaultCodeExplanation(question);
         if (deterministic != null) {
             log.info("fault request planned deterministically: requestId={}, tasks={}, faultCodes={}",
                 requestId, deterministic.tasks(), deterministic.faultCodes());
             return deterministic;
         }
+        if (chatModel == null) throw new ServiceException("故障诊断模型不可用");
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(SYSTEM + "业务当前时间=" + now + "；时区=" + timezone
             + "；默认窗口分钟=" + defaultWindowMinutes + "；允许资产=" + (allowedAssets == null ? List.of() : allowedAssets)));
@@ -83,8 +88,8 @@ public class FaultRequestPlanner {
      * 包含遥测、时间窗口或显式诊断意图的复合请求仍交给模型规划。
      */
     private static FaultRequestPlan planExplicitFaultCodeExplanation(String question) {
-        if (StringUtils.isBlank(question) || !EXPLANATION_INTENT.matcher(question).find()
-            || TELEMETRY_DIAGNOSIS_INTENT.matcher(question).find()) {
+        if (StringUtils.isBlank(question) || TELEMETRY_DIAGNOSIS_INTENT.matcher(question).find()
+            || ASSET_CONTEXT.matcher(question).find() || EXPLICIT_TIME_RANGE.matcher(question).find()) {
             return null;
         }
         Matcher matcher = EXPLICIT_FAULT_CODE.matcher(question);
@@ -93,6 +98,10 @@ public class FaultRequestPlanner {
             codes.add(matcher.group(1).toUpperCase(Locale.ROOT));
         }
         if (codes.isEmpty()) return null;
+        String remainder = EXPLICIT_FAULT_CODE.matcher(question).replaceAll("");
+        if (!EXPLANATION_INTENT.matcher(question).find() && !FAULT_CODE_SEPARATORS.matcher(remainder).matches()) {
+            return null;
+        }
         return new FaultRequestPlan(List.of(org.ruoyi.service.fault.model.FaultTaskType.EXPLAIN_FAULT_CODE),
             null, null, null, null, null, List.copyOf(codes), null, requestedAspects(question));
     }
