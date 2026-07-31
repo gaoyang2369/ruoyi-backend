@@ -26,6 +26,8 @@ import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
+import org.ruoyi.service.fault.model.FaultKnowledgeAnswerDraft;
+import org.ruoyi.service.fault.model.FaultKnowledgeFacts;
 import org.ruoyi.service.fault.model.FaultRequestPlan;
 import org.ruoyi.service.fault.model.FaultTaskType;
 import org.springframework.stereotype.Service;
@@ -90,11 +92,48 @@ public class FaultDiagnosisChatService {
     private String answerKnowledgeQuery(ChatRequest request, AgentVo agent, ChatModel model, FaultRequestPlan plan,
                                         FaultExecutionResult execution, String requestId, long startNanos) {
         Map<String, FaultKnowledgeResult> results = execution.explicitKnowledgeResults();
-        String fallback = renderKnowledgeFallback(plan.faultCodes(), results, agent.getKnowledgeIds());
+        List<FaultKnowledgeFacts> facts = SiemensFaultKnowledgeExtractor.extract(plan.faultCodes(), results);
+        String fallback = renderKnowledgeFallback(plan.faultCodes(), results, agent.getKnowledgeIds(), facts);
         if (!allKnowledgeMatched(plan.faultCodes(), results)) return fallback;
-        String body = generateValidatedAnswer(model, request.getContent(), plan, execution, agent, false,
+        String body = generateValidatedKnowledgeAnswer(model, request.getContent(), plan, execution, agent, facts,
             requestId, startNanos);
         return body == null ? fallback : renderKnowledgeModelAnswer(plan.faultCodes(), body, results);
+    }
+
+    private String generateValidatedKnowledgeAnswer(ChatModel model, String question, FaultRequestPlan plan,
+                                                    FaultExecutionResult execution, AgentVo agent,
+                                                    List<FaultKnowledgeFacts> facts, String requestId,
+                                                    long startNanos) {
+        FaultKnowledgeAnswerDraft draft;
+        try {
+            draft = faultAnswerGenerator.generateKnowledgeDraft(model, question, plan, facts, agent);
+        } catch (RuntimeException ex) {
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.MODEL_EXCEPTION, ex);
+            return null;
+        }
+        if (draft == null) {
+            logFallback(requestId, plan, execution, startNanos, FallbackReason.EMPTY_MODEL_ANSWER, null);
+            return null;
+        }
+        String body;
+        try {
+            if (!FaultKnowledgeAnswerRenderer.valid(draft, facts, plan.faultCodes())) {
+                logFallback(requestId, plan, execution, startNanos,
+                    FallbackReason.SAFETY_VALIDATION_REJECTED, null);
+                return null;
+            }
+            body = FaultKnowledgeAnswerRenderer.renderDraft(draft, facts);
+            if (!faultAnswerSafetyValidator.valid(body, execution, false)) {
+                logFallback(requestId, plan, execution, startNanos,
+                    FallbackReason.SAFETY_VALIDATION_REJECTED, null);
+                return null;
+            }
+        } catch (RuntimeException ex) {
+            logFallback(requestId, plan, execution, startNanos,
+                FallbackReason.SAFETY_VALIDATION_REJECTED, ex);
+            return null;
+        }
+        return body;
     }
 
     private String generateValidatedAnswer(ChatModel model, String question, FaultRequestPlan plan,
@@ -240,7 +279,11 @@ public class FaultDiagnosisChatService {
     }
     /** 保留原包内测试兼容名。 */ String render(DiagnosisResult result) { return renderFallback(result); }
     private static String renderKnowledgeFallback(List<String> faultCodes, Map<String, FaultKnowledgeResult> results,
-                                                  List<Long> knowledgeIds) {
+                                                  List<Long> knowledgeIds,
+                                                  List<FaultKnowledgeFacts> facts) {
+        Map<String, FaultKnowledgeFacts> factsByCode = facts.stream()
+            .collect(Collectors.toMap(FaultKnowledgeFacts::faultCode, item -> item,
+                (left, right) -> left, LinkedHashMap::new));
         StringBuilder out = new StringBuilder();
         for (String faultCode : faultCodes) {
             if (!out.isEmpty()) out.append("\n\n");
@@ -255,7 +298,12 @@ public class FaultDiagnosisChatService {
             } else if (result.status() == FaultKnowledgeResult.Status.NOT_FOUND) {
                 out.append("\n已查询绑定的故障知识库，但未找到与该故障码精确匹配的内容。");
             } else {
-                appendKnowledgeContent(out, result.evidence());
+                FaultKnowledgeFacts fact = factsByCode.get(faultCode);
+                if (fact == null) {
+                    out.append("\n未能从匹配内容中提取结构化章节。");
+                } else {
+                    out.append('\n').append(FaultKnowledgeAnswerRenderer.renderFallback(List.of(fact)));
+                }
                 appendKnowledgeSources(out, faultCode, result.evidence());
             }
         }
@@ -281,16 +329,6 @@ public class FaultDiagnosisChatService {
         return !faultCodes.isEmpty() && faultCodes.stream()
             .map(results::get)
             .allMatch(result -> result != null && result.status() == FaultKnowledgeResult.Status.MATCHED);
-    }
-
-    private static void appendKnowledgeContent(StringBuilder out, List<FaultKnowledgeEvidence> evidence) {
-        out.append("\n知识正文：\n");
-        for (int i = 0; i < evidence.size(); i++) {
-            String content = evidence.get(i).content();
-            if (evidence.size() > 1) out.append(i + 1).append(". ");
-            out.append(StringUtils.isBlank(content) ? "无可用正文" : content.trim());
-            if (i < evidence.size() - 1) out.append('\n');
-        }
     }
 
     private static void appendKnowledgeSources(StringBuilder out, String faultCode,

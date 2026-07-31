@@ -32,6 +32,7 @@ import org.ruoyi.fault.application.FaultCodeKnowledgeQueryService;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.service.chat.IChatMessageService;
+import org.ruoyi.service.fault.model.FaultKnowledgeAnswerDraft;
 import org.ruoyi.service.fault.model.FaultRequestPlan;
 import org.ruoyi.service.fault.model.FaultTaskType;
 
@@ -191,13 +192,17 @@ class FaultDiagnosisChatServiceTest {
         FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
             "fragment-7", 7, "含义：驱动编码器多圈线数不是二的幂次方。\n原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
         PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
-        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any()))
+        when(faultAnswerGenerator.generateKnowledgeDraft(any(), any(), any(), any(), any()))
             .thenThrow(new IllegalStateException("model unavailable"));
 
         LoggedAnswer result = diagnoseWithLogs(input);
         String answer = result.answer();
 
-        assertTrue(answer.contains(evidence.content()));
+        assertTrue(answer.contains("### F07561：驱动编码器多圈线数不是二的幂次方。"));
+        assertTrue(answer.contains("**可能原因**"));
+        assertTrue(answer.contains("参数 p0421 设置错误"));
+        assertTrue(answer.contains("**处理建议**"));
+        assertFalse(answer.contains("知识正文："));
         assertTrue(answer.contains("来源：F07561 - S120_故障手册.pdf / fragment-7"));
         assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
         assertFallbackLog(result.logs(), "MODEL_EXCEPTION");
@@ -209,13 +214,15 @@ class FaultDiagnosisChatServiceTest {
         FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
             "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
         PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
-        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn("不安全的模型回答");
+        when(faultAnswerGenerator.generateKnowledgeDraft(any(), any(), any(), any(), any()))
+            .thenReturn(knowledgeDraft("不安全的模型回答"));
         when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(false);
 
         LoggedAnswer result = diagnoseWithLogs(input);
         String answer = result.answer();
 
-        assertTrue(answer.contains(evidence.content()));
+        assertTrue(answer.contains("**可能原因**"));
+        assertTrue(answer.contains("参数 p0421 设置错误"));
         assertFalse(answer.contains("不安全的模型回答"));
         assertTrue(answer.contains("S120_故障手册.pdf"));
         assertFallbackLog(result.logs(), "SAFETY_VALIDATION_REJECTED");
@@ -227,12 +234,13 @@ class FaultDiagnosisChatServiceTest {
         FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
             "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
         PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
-        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn(" ");
+        when(faultAnswerGenerator.generateKnowledgeDraft(any(), any(), any(), any(), any())).thenReturn(null);
 
         LoggedAnswer result = diagnoseWithLogs(input);
         String answer = result.answer();
 
-        assertTrue(answer.contains(evidence.content()));
+        assertTrue(answer.contains("**可能原因**"));
+        assertTrue(answer.contains("参数 p0421 设置错误"));
         assertTrue(answer.contains("S120_故障手册.pdf"));
         verifyNoInteractions(faultAnswerSafetyValidator);
         assertFallbackLog(result.logs(), "EMPTY_MODEL_ANSWER");
@@ -244,13 +252,15 @@ class FaultDiagnosisChatServiceTest {
         FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
             "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
         PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
-        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any()))
-            .thenReturn("F07561 的原因是参数设置错误，建议检查参数。");
+        when(faultAnswerGenerator.generateKnowledgeDraft(any(), any(), any(), any(), any()))
+            .thenReturn(knowledgeDraft("参数设置不正确会触发该故障。"));
         when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(true);
 
         String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
 
-        assertTrue(answer.contains("F07561 的原因是参数设置错误，建议检查参数。"));
+        assertTrue(answer.contains("参数设置不正确会触发该故障。"));
+        assertTrue(answer.contains("**先检查什么**"));
+        assertTrue(answer.contains("**处理建议**"));
         assertTrue(answer.contains("来源：F07561 - S120_故障手册.pdf / fragment-7"));
         assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
     }
@@ -292,6 +302,12 @@ class FaultDiagnosisChatServiceTest {
         agent.setExecutionMode(AgentExecutionMode.DETERMINISTIC.name());
         agent.setKnowledgeIds(List.of(8L));
         return agent;
+    }
+
+    private static FaultKnowledgeAnswerDraft knowledgeDraft(String summary) {
+        return new FaultKnowledgeAnswerDraft(List.of(new FaultKnowledgeAnswerDraft.FaultAnswer(
+            "F07561", summary, List.of("参数 p0421 设置错误。"), "检查 p0421 的参数设定。",
+            List.of(), List.of("检查参数设定。"), List.of("p0421"), List.of())));
     }
 
     private PureKnowledgeRequest pureKnowledgeRequest(FaultKnowledgeResult result) {
