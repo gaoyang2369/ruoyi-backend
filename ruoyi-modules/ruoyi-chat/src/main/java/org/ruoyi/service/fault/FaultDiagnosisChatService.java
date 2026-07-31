@@ -73,10 +73,8 @@ public class FaultDiagnosisChatService {
         Map<String, FaultKnowledgeResult> explicit = queryExplicitKnowledge(normalized.plan(), diagnosis, agent.getKnowledgeIds());
         FaultExecutionResult execution = new FaultExecutionResult(normalized.plan(), diagnosis, explicit,
             diagnosis == null ? knowledgeLimitations(normalized.plan(), agent) : diagnosis.limitations());
-        if (diagnosis == null && normalized.plan().tasks().contains(FaultTaskType.EXPLAIN_FAULT_CODE)
-            && (agent.getKnowledgeIds() == null || agent.getKnowledgeIds().isEmpty())) {
-            return renderDeterministicFacts(execution) + "\n\n分析说明：\n当前 Agent 未绑定故障知识库，无法查询故障码知识。"
-                + appendEvidenceAndSources(execution);
+        if (diagnosis == null && normalized.plan().tasks().contains(FaultTaskType.EXPLAIN_FAULT_CODE)) {
+            return answerKnowledgeQuery(request, agent, model, normalized.plan(), execution);
         }
         String body;
         try {
@@ -84,9 +82,26 @@ public class FaultDiagnosisChatService {
                 execution.allowedEvidenceCodes(), agent);
             if (!faultAnswerSafetyValidator.valid(body, execution, diagnosis != null)) throw new IllegalStateException("fault answer safety validation failed");
         } catch (RuntimeException ex) {
-            body = diagnosis == null ? renderKnowledgeFallback(explicit) : renderFallback(diagnosis);
+            body = renderFallback(diagnosis);
         }
         return renderDeterministicFacts(execution) + "\n\n分析说明：\n" + body + appendEvidenceAndSources(execution);
+    }
+
+    private String answerKnowledgeQuery(ChatRequest request, AgentVo agent, ChatModel model, FaultRequestPlan plan,
+                                        FaultExecutionResult execution) {
+        Map<String, FaultKnowledgeResult> results = execution.explicitKnowledgeResults();
+        String fallback = renderKnowledgeFallback(plan.faultCodes(), results, agent.getKnowledgeIds());
+        if (!allKnowledgeMatched(plan.faultCodes(), results)) return fallback;
+        try {
+            String body = faultAnswerGenerator.generate(model, request.getContent(), plan, execution,
+                execution.allowedEvidenceCodes(), agent);
+            if (StringUtils.isBlank(body) || !faultAnswerSafetyValidator.valid(body, execution, false)) {
+                throw new IllegalStateException("fault answer safety validation failed");
+            }
+            return renderKnowledgeModelAnswer(plan.faultCodes(), body, results);
+        } catch (RuntimeException ex) {
+            return fallback;
+        }
     }
 
     DiagnosisCommand buildCommand(ChatRequest request, AgentVo agent, Long userId, String tenantId) {
@@ -178,7 +193,77 @@ public class FaultDiagnosisChatService {
         text.append("实际证据编号：").append(joinOrNone(actual)).append('\n').append("requestId：").append(valueOrNone(result.requestId())); return text.toString();
     }
     /** 保留原包内测试兼容名。 */ String render(DiagnosisResult result) { return renderFallback(result); }
-    private static String renderKnowledgeFallback(Map<String, FaultKnowledgeResult> results) { return results.isEmpty() ? "当前 Agent 未绑定故障知识库，无法查询故障码知识。" : "以下为用户单独查询的故障码知识，不代表本次设备遥测已出现该故障码。"; }
+    private static String renderKnowledgeFallback(List<String> faultCodes, Map<String, FaultKnowledgeResult> results,
+                                                  List<Long> knowledgeIds) {
+        StringBuilder out = new StringBuilder();
+        for (String faultCode : faultCodes) {
+            if (!out.isEmpty()) out.append("\n\n");
+            out.append("故障码知识查询：").append(faultCode).append('\n');
+            if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+                out.append("\n当前 Agent 未绑定故障知识库，无法查询该故障码。");
+                continue;
+            }
+            FaultKnowledgeResult result = results.get(faultCode);
+            if (result == null || result.status() == FaultKnowledgeResult.Status.FAILED) {
+                out.append("\n知识查询失败，请稍后重试。");
+            } else if (result.status() == FaultKnowledgeResult.Status.NOT_FOUND) {
+                out.append("\n已查询绑定的故障知识库，但未找到与该故障码精确匹配的内容。");
+            } else {
+                appendKnowledgeContent(out, result.evidence());
+                appendKnowledgeSources(out, faultCode, result.evidence());
+            }
+        }
+        appendKnowledgeBoundary(out);
+        return out.toString();
+    }
+
+    private static String renderKnowledgeModelAnswer(List<String> faultCodes, String body,
+                                                     Map<String, FaultKnowledgeResult> results) {
+        StringBuilder out = new StringBuilder("故障码知识查询：")
+            .append(String.join("、", faultCodes))
+            .append("\n\n")
+            .append(body.trim());
+        for (String faultCode : faultCodes) {
+            FaultKnowledgeResult result = results.get(faultCode);
+            if (result != null) appendKnowledgeSources(out, faultCode, result.evidence());
+        }
+        appendKnowledgeBoundary(out);
+        return out.toString();
+    }
+
+    private static boolean allKnowledgeMatched(List<String> faultCodes, Map<String, FaultKnowledgeResult> results) {
+        return !faultCodes.isEmpty() && faultCodes.stream()
+            .map(results::get)
+            .allMatch(result -> result != null && result.status() == FaultKnowledgeResult.Status.MATCHED);
+    }
+
+    private static void appendKnowledgeContent(StringBuilder out, List<FaultKnowledgeEvidence> evidence) {
+        out.append("\n知识正文：\n");
+        for (int i = 0; i < evidence.size(); i++) {
+            String content = evidence.get(i).content();
+            if (evidence.size() > 1) out.append(i + 1).append(". ");
+            out.append(StringUtils.isBlank(content) ? "无可用正文" : content.trim());
+            if (i < evidence.size() - 1) out.append('\n');
+        }
+    }
+
+    private static void appendKnowledgeSources(StringBuilder out, String faultCode,
+                                               List<FaultKnowledgeEvidence> evidence) {
+        Set<String> sources = new LinkedHashSet<>();
+        for (FaultKnowledgeEvidence item : evidence) {
+            String document = StringUtils.isNotBlank(item.sourceDocument())
+                ? item.sourceDocument() : valueOrNone(item.documentId());
+            sources.add(document + (StringUtils.isBlank(item.fragmentId()) ? "" : " / " + item.fragmentId()));
+        }
+        if (!sources.isEmpty()) {
+            out.append("\n来源：").append(faultCode).append(" - ").append(String.join("、", sources));
+        }
+    }
+
+    private static void appendKnowledgeBoundary(StringBuilder out) {
+        out.append("\n\n说明：本次仅查询故障手册，未读取设备遥测数据。");
+    }
+
     private static String renderDeterministicFacts(FaultExecutionResult execution) {
         DiagnosisResult result = execution.diagnosisResult();
         StringBuilder out = new StringBuilder("确定性诊断事实：\n");

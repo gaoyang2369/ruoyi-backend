@@ -164,28 +164,96 @@ class FaultDiagnosisChatServiceTest {
 
     @Test
     void pureFaultCodeQueryUsesPlannerAndNeverQueriesTelemetry() {
-        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
-        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
-        ChatRequest request = new ChatRequest();
-        request.setContent("F30005 是什么意思");
-        request.setSessionId(9L);
-        AgentVo agent = enabledAgent();
-        agent.setKnowledgeIds(List.of(21L));
-        ChatModel model = org.mockito.Mockito.mock(ChatModel.class);
-        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.EXPLAIN_FAULT_CODE), null, null, null,
-            null, null, List.of("F30005"), null, List.of());
-        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
-        when(faultCodeKnowledgeQueryService.query("F30005", List.of(21L)))
-            .thenReturn(FaultKnowledgeResult.notFound(new FaultKnowledgeQuery("F30005", List.of(21L))));
-        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn("F30005 是知识查询结果。");
-        when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(true);
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F30005", List.of(21L));
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.notFound(query));
 
-        String answer = chatService.diagnose(request, agent, model, 3L, "tenant-a");
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
 
         verify(faultRequestPlanner).plan(any(), any(), any(), any(), anyInt(), any(), any(), any());
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
         verify(faultCodeKnowledgeQueryService).query("F30005", List.of(21L));
-        assertTrue(answer.contains("以下故障码仅进行知识查询，未确认在本次遥测范围内出现：F30005"));
+        verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
+        assertTrue(answer.contains("故障码知识查询：F30005"));
+        assertTrue(answer.contains("已查询绑定的故障知识库，但未找到与该故障码精确匹配的内容"));
+        assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
+        assertFalse(answer.contains("确定性诊断事实"));
+        assertFalse(answer.contains("诊断状态：未执行设备遥测诊断"));
+    }
+
+    @Test
+    void returnsCompleteKnowledgeAndSourceWhenModelFails() {
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F07561", List.of(21L));
+        FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
+            "fragment-7", 7, "含义：驱动编码器多圈线数不是二的幂次方。\n原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
+        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any()))
+            .thenThrow(new IllegalStateException("model unavailable"));
+
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+
+        assertTrue(answer.contains(evidence.content()));
+        assertTrue(answer.contains("来源：F07561 - S120_故障手册.pdf / fragment-7"));
+        assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
+    }
+
+    @Test
+    void returnsCompleteKnowledgeWhenModelAnswerFailsSafetyValidation() {
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F07561", List.of(21L));
+        FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
+            "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
+        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn("不安全的模型回答");
+        when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(false);
+
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+
+        assertTrue(answer.contains(evidence.content()));
+        assertFalse(answer.contains("不安全的模型回答"));
+        assertTrue(answer.contains("S120_故障手册.pdf"));
+    }
+
+    @Test
+    void returnsCompleteKnowledgeWhenModelAnswerIsEmpty() {
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F07561", List.of(21L));
+        FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
+            "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
+        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any())).thenReturn(" ");
+
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+
+        assertTrue(answer.contains(evidence.content()));
+        assertTrue(answer.contains("S120_故障手册.pdf"));
+        verifyNoInteractions(faultAnswerSafetyValidator);
+    }
+
+    @Test
+    void usesSafeModelAnswerAndKeepsKnowledgeSource() {
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F07561", List.of(21L));
+        FaultKnowledgeEvidence evidence = new FaultKnowledgeEvidence(21L, "doc-1", "S120_故障手册.pdf",
+            "fragment-7", 7, "原因：参数 p0421 设置错误。\n处理建议：检查参数设定。");
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.matched(query, List.of(evidence)));
+        when(faultAnswerGenerator.generate(any(), any(), any(), any(), any(), any()))
+            .thenReturn("F07561 的原因是参数设置错误，建议检查参数。");
+        when(faultAnswerSafetyValidator.valid(any(), any(), anyBoolean())).thenReturn(true);
+
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+
+        assertTrue(answer.contains("F07561 的原因是参数设置错误，建议检查参数。"));
+        assertTrue(answer.contains("来源：F07561 - S120_故障手册.pdf / fragment-7"));
+        assertTrue(answer.contains("本次仅查询故障手册，未读取设备遥测数据"));
+    }
+
+    @Test
+    void distinguishesKnowledgeQueryFailureFromNotFound() {
+        FaultKnowledgeQuery query = new FaultKnowledgeQuery("F30005", List.of(21L));
+        PureKnowledgeRequest input = pureKnowledgeRequest(FaultKnowledgeResult.failed(query));
+
+        String answer = chatService.diagnose(input.request(), input.agent(), input.model(), 3L, "tenant-a");
+
+        assertTrue(answer.contains("知识查询失败，请稍后重试"));
+        assertFalse(answer.contains("未找到与该故障码精确匹配的内容"));
+        verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
     }
 
     private static ChatRequest requestWithTimes() {
@@ -213,6 +281,25 @@ class FaultDiagnosisChatServiceTest {
         agent.setExecutionMode(AgentExecutionMode.DETERMINISTIC.name());
         agent.setKnowledgeIds(List.of(8L));
         return agent;
+    }
+
+    private PureKnowledgeRequest pureKnowledgeRequest(FaultKnowledgeResult result) {
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
+        ChatRequest request = new ChatRequest();
+        request.setContent(result.faultCode() + " 是什么原因？如何解决？");
+        request.setSessionId(9L);
+        AgentVo agent = enabledAgent();
+        agent.setKnowledgeIds(List.of(21L));
+        ChatModel model = org.mockito.Mockito.mock(ChatModel.class);
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.EXPLAIN_FAULT_CODE), null, null, null,
+            null, null, List.of(result.faultCode()), null, List.of());
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(faultCodeKnowledgeQueryService.query(result.faultCode(), List.of(21L))).thenReturn(result);
+        return new PureKnowledgeRequest(request, agent, model);
+    }
+
+    private record PureKnowledgeRequest(ChatRequest request, AgentVo agent, ChatModel model) {
     }
 
     private static DiagnosisResult result(boolean partial, List<EvidenceReference> references,
