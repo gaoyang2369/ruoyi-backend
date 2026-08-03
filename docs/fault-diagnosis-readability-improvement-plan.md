@@ -1,6 +1,6 @@
 # 故障诊断 Agent 可信度与可读性改进方案
 
-> 状态：待实施  
+> 状态：已实施（2026-08-03）  
 > 制定日期：2026-08-03  
 > 适用范围：设备遥测诊断、运行状态查询及诊断结果展示
 
@@ -404,7 +404,19 @@ A07089 是报警，不是 F 类故障。资料显示，该报警通常与单位�
 12. 回答主体不展示 `partial`、`requestId` 和内部英文状态；
 13. 相关自动化测试通过，并完成一次真实 SSE 端到端验证。
 
-## 10. 后续可选项
+## 10. 实施记录（2026-08-03）
+
+1. 模拟数据：`real_data_01` 中 `A07089` 已从 `fault_code` 移至 `alarm_code`；`F30899`、`F07016` 保持在 `fault_code`。
+2. 新增 `FaultCodeType`（G120 的 F/A/0/未知确定性分类）；`TelemetryDataAnalyzer` 按代码前缀归类两个字段，未知代码进入 `unknownCodes`，字段与类型不一致时记录数据质量说明，并计算 `latestObservedAt`。
+3. `FaultDiagnosisOrchestrator` 知识查询覆盖故障码与报警码；`CandidateFault` 携带代码类型，观测/限制措辞区分“故障/报警”。
+4. `TelemetryQueryResult` / `DiagnosisResult` 增加请求窗口、实际窗口、`fallbackToLatestData`、`latestObservedAt` 等结构化时间边界字段。
+5. `EvidenceReference` 携带服务端生成的类型、标题与一句话摘要，并区分用户可见与内部审计；证据按诊断执行顺序以有序列表展示。
+6. 新增 `FaultDiagnosisAnswerRenderer`：统一回答骨架（结论 → 最近一次观测 → 代码说明 → 建议 → 判断依据 → 结论边界），历史回退第一句话固定为“当前状态无法确认”，回答主体不再出现 `partial`、`requestId` 与内部英文状态。
+7. `FaultAnswerGenerator` 提示词收敛模型职责为“代码说明 + 建议”，可信摘要补全报警码与时间边界；`FaultAnswerSafetyValidator` 同时校验 F 类与 A 类代码。
+8. 验证：fault 模块 54 个测试、chat 模块故障相关 70 个测试全部通过；三台模拟设备完成真实 SSE 端到端验证（回退场景回答以“当前状态无法确认”开头，故障与报警分别展示，证据编号均带可读摘要）。
+9. 遗留观察：LLM 请求规划器对自然语言中“到”字连接的时间范围偶发解析失败，触发澄清话术；结构化入参（faultDiagnosis.startTime/endTime）路径正常。该问题不属于本轮范围。
+
+## 11. 后续可选项
 
 本轮稳定后，可根据真实遥测数据逐步评估：
 

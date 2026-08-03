@@ -2,6 +2,8 @@ package org.ruoyi.service.fault;
 
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -11,9 +13,12 @@ import java.util.regex.Pattern;
 public class EvidenceCitationValidator {
     private static final Pattern EVIDENCE = Pattern.compile("\\[EV-\\d+]");
 
-    public boolean valid(String answer, Set<String> allowedEvidenceCodes, boolean diagnosisExecuted) {
+    /**
+     * @param allowedEvidenceCodes 按诊断执行顺序排列的证据编号；仅用于成员判断，展示顺序由渲染层保证。
+     */
+    public boolean valid(String answer, List<String> allowedEvidenceCodes, boolean diagnosisExecuted) {
         if (answer == null || answer.isBlank()) return false;
-        Set<String> allowed = allowedEvidenceCodes == null ? Set.of() : allowedEvidenceCodes;
+        Set<String> allowed = allowedEvidenceCodes == null ? Set.of() : new LinkedHashSet<>(allowedEvidenceCodes);
         Matcher matcher = EVIDENCE.matcher(answer);
         boolean cited = false;
         while (matcher.find()) {

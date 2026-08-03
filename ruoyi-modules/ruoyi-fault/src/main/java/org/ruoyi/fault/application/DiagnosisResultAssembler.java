@@ -37,6 +37,7 @@ public class DiagnosisResultAssembler {
         List<String> limitations = new ArrayList<>(decision.limitations());
         limitations.addAll(knowledge.limitations());
         limitations.addAll(evidenceLimitations == null ? List.of() : evidenceLimitations);
+        limitations.addAll(telemetry.codeNormalizationNotes());
         if (telemetry.fallbackToLatestData()) {
             limitations.add("请求时间范围内没有遥测数据，已回退至该设备最近可用数据（"
                 + TIME_FORMATTER.format(telemetry.startTime()) + " 至 "
@@ -45,11 +46,13 @@ public class DiagnosisResultAssembler {
 
         boolean partial = evidencePartial || candidates.stream()
             .anyMatch(candidate -> candidate.knowledgeStatus() == KnowledgeLookupStatus.FAILED);
-        // 结果时间使用遥测实际分析窗口：未回退时与请求窗口一致，回退时为最近可用数据窗口。
+        // startTime/endTime 使用遥测实际分析窗口：未回退时与请求窗口一致，回退时为最近可用数据窗口。
+        // 请求窗口、回退标记和最后观测时间作为结构化字段传递，回答层据此决定时态。
         return new DiagnosisResult(command.context().requestId(), decision.status(), partial, command.deviceName(),
-            command.inverterName(), telemetry.startTime(), telemetry.endTime(), command.symptom(), telemetry.quality(),
-            telemetry.statistics(), telemetry.faultCodes(), telemetry.alarmCodes(), observations, candidates,
-            recommendations, distinct(limitations), evidenceIndex);
+            command.inverterName(), command.startTime(), command.endTime(), telemetry.startTime(), telemetry.endTime(),
+            telemetry.fallbackToLatestData(), telemetry.latestObservedAt(), command.symptom(), telemetry.quality(),
+            telemetry.statistics(), telemetry.faultCodes(), telemetry.alarmCodes(), telemetry.unknownCodes(),
+            observations, candidates, recommendations, distinct(limitations), evidenceIndex);
     }
 
     private static List<String> distinct(List<String> values) {

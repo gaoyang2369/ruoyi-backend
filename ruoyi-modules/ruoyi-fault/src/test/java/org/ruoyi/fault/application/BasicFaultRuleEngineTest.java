@@ -54,7 +54,7 @@ class BasicFaultRuleEngineTest {
     private static TelemetryQueryResult telemetry(boolean sufficient, List<String> faultCodes, List<String> alarmCodes) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
-            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), null, null,
-            false);
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), List.of(),
+            null, null, false, start.plusMinutes(4), List.of());
     }
 }

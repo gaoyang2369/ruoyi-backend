@@ -12,10 +12,12 @@ import org.ruoyi.fault.application.BasicFaultRuleEngine;
 import org.ruoyi.fault.application.DiagnosisCommandValidator;
 import org.ruoyi.fault.application.DiagnosisResultAssembler;
 import org.ruoyi.fault.application.FaultDiagnosisEvidenceRecorder;
+import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.enums.KnowledgeLookupStatus;
+import org.ruoyi.fault.domain.result.CandidateFault;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgePort;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
@@ -115,8 +117,8 @@ class FaultDiagnosisOrchestratorTest {
     void telemetryEvidenceDigestIsStoredWithoutAlgorithmPrefix() {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         TelemetryQueryResult prefixed = new TelemetryQueryResult("device", start, start.plusMinutes(5),
-            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), null,
-            "sha256:" + "a".repeat(64), false);
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), List.of(), null,
+            "sha256:" + "a".repeat(64), false, start.plusMinutes(4), List.of());
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any())).thenReturn(prefixed);
 
         orchestrator.diagnose(command(List.of()));
@@ -130,18 +132,59 @@ class FaultDiagnosisOrchestratorTest {
     }
 
     @Test
-    void doesNotQueryKnowledgeWithoutFaultCodeOrKnowledgeBaseBinding() {
+    void queriesKnowledgeForAlarmCodesWithAlarmType() {
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
-            .thenReturn(telemetry(true, List.of(), List.of("A001")));
+            .thenReturn(telemetry(true, List.of(), List.of(" a07089 ")));
+        when(faultKnowledgePort.query(any())).thenAnswer(invocation ->
+            FaultKnowledgeResult.matched(invocation.getArgument(0, FaultKnowledgeQuery.class),
+                List.of(new FaultKnowledgeEvidence(7L, "doc", "G120故障手册", "fragment", 0, "A07089 entry"))));
 
-        orchestrator.diagnose(command(List.of(7L)));
-        verify(faultKnowledgePort, never()).query(any());
+        DiagnosisResult result = orchestrator.diagnose(command(List.of(7L)));
 
+        ArgumentCaptor<FaultKnowledgeQuery> captor = ArgumentCaptor.forClass(FaultKnowledgeQuery.class);
+        verify(faultKnowledgePort).query(captor.capture());
+        assertEquals("A07089", captor.getValue().faultCode());
+        assertEquals(DiagnosisStatus.WARNING_DETECTED, result.status());
+        assertEquals(1, result.candidateFaults().size());
+        assertEquals(FaultCodeType.ALARM, result.candidateFaults().get(0).codeType());
+        assertEquals(KnowledgeLookupStatus.MATCHED, result.candidateFaults().get(0).knowledgeStatus());
+        assertTrue(result.observations().stream()
+            .anyMatch(observation -> observation.message().contains("报警码已匹配知识依据")));
+    }
+
+    @Test
+    void queriesFaultCodesBeforeAlarmCodesAndKeepsBothInResult() {
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
-            .thenReturn(telemetry(true, List.of("F001"), List.of()));
+            .thenReturn(telemetry(true, List.of("F30899"), List.of("A07089")));
+        when(faultKnowledgePort.query(any())).thenAnswer(invocation ->
+            FaultKnowledgeResult.notFound(invocation.getArgument(0, FaultKnowledgeQuery.class)));
+
+        DiagnosisResult result = orchestrator.diagnose(command(List.of(7L)));
+
+        ArgumentCaptor<FaultKnowledgeQuery> captor = ArgumentCaptor.forClass(FaultKnowledgeQuery.class);
+        verify(faultKnowledgePort, times(2)).query(captor.capture());
+        assertEquals(List.of("F30899", "A07089"),
+            captor.getAllValues().stream().map(FaultKnowledgeQuery::faultCode).toList());
+        assertEquals(DiagnosisStatus.FAULT_DETECTED, result.status());
+        assertEquals(List.of("F30899"), result.faultCodes());
+        assertEquals(List.of("A07089"), result.alarmCodes());
+        assertEquals(List.of(FaultCodeType.FAULT, FaultCodeType.ALARM),
+            result.candidateFaults().stream().map(CandidateFault::codeType).toList());
+        assertTrue(result.limitations().stream().anyMatch(item -> item.contains("报警码 A07089 未找到匹配的知识依据")));
+    }
+
+    @Test
+    void skipsKnowledgeQueryWithoutKnowledgeBaseBinding() {
+        when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
+            .thenReturn(telemetry(true, List.of("F001"), List.of("A001")));
+
         DiagnosisResult result = orchestrator.diagnose(command(List.of()));
+
         verify(faultKnowledgePort, never()).query(any());
-        assertEquals(KnowledgeLookupStatus.SKIPPED, result.candidateFaults().get(0).knowledgeStatus());
+        assertEquals(List.of(KnowledgeLookupStatus.SKIPPED, KnowledgeLookupStatus.SKIPPED),
+            result.candidateFaults().stream().map(CandidateFault::knowledgeStatus).toList());
+        assertTrue(result.limitations().stream()
+            .anyMatch(item -> item.contains("未绑定可用知识库")));
     }
 
     @Test
@@ -221,7 +264,8 @@ class FaultDiagnosisOrchestratorTest {
     private static TelemetryQueryResult telemetry(boolean sufficient, List<String> faultCodes, List<String> alarmCodes) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
-            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), null,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), List.of(),
+            null, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false,
+            start.plusMinutes(4), List.of());
     }
 }

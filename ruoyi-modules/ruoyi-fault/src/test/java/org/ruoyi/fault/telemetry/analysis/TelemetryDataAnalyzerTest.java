@@ -87,6 +87,70 @@ class TelemetryDataAnalyzerTest {
         assertEquals(null, result.statusEvents().get(0).faultCode());
     }
 
+    @Test
+    void classifiesAlarmCodeWrittenIntoFaultCodeFieldAsAlarm() {
+        RealDataEntity record = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(1), "RUNNING", "A07089", 10F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, END_TIME, List.of(record));
+
+        assertEquals(List.of(), result.faultCodes());
+        assertEquals(List.of("A07089"), result.alarmCodes());
+        assertTrue(result.codeNormalizationNotes().stream().anyMatch(note -> note.contains("字段与代码类型不一致")));
+        assertEquals(1, result.statusEvents().size());
+        assertEquals(null, result.statusEvents().get(0).faultCode());
+        assertEquals("A07089", result.statusEvents().get(0).alarmCode());
+    }
+
+    @Test
+    void classifiesCodesByPrefixAcrossBothFields() {
+        RealDataEntity fault = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(1), "FAULT", "F30899", 10F);
+        RealDataEntity alarm = telemetryWithAlarm(2L, "2026-07-24 09:00:01", START_TIME.plusSeconds(2),
+            "RUNNING", "0", "a07089");
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME,
+            START_TIME.plusSeconds(3), List.of(fault, alarm));
+
+        assertEquals(List.of("F30899"), result.faultCodes());
+        assertEquals(List.of("A07089"), result.alarmCodes());
+        assertTrue(result.codeNormalizationNotes().isEmpty());
+    }
+
+    @Test
+    void keepsUnknownCodesOutOfFaultAndAlarmLists() {
+        RealDataEntity record = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(1), "RUNNING", "XYZ-1", 10F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, END_TIME, List.of(record));
+
+        assertEquals(List.of(), result.faultCodes());
+        assertEquals(List.of(), result.alarmCodes());
+        assertEquals(List.of("XYZ-1"), result.unknownCodes());
+        assertTrue(result.codeNormalizationNotes().stream().anyMatch(note -> note.contains("未识别代码")));
+        assertEquals(null, result.statusEvents().get(0).faultCode());
+    }
+
+    @Test
+    void reportsLatestObservedAtFromLastValidRecord() {
+        RealDataEntity first = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(5), "RUNNING", "0", 10F);
+        RealDataEntity last = telemetry(2L, "2026-07-24 09:00:01", null, null,
+            START_TIME.plusSeconds(6), "RUNNING", "0", 11F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, START_TIME.plusSeconds(2),
+            List.of(last, first));
+
+        assertEquals(START_TIME.plusSeconds(1), result.latestObservedAt());
+    }
+
+    @Test
+    void latestObservedAtIsNullWithoutValidRecords() {
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, END_TIME, List.of());
+
+        assertEquals(null, result.latestObservedAt());
+    }
+
     /**
      * 构造一条仅包含本测试所需字段的 real_data 记录。
      */
@@ -103,6 +167,13 @@ class TelemetryDataAnalyzerTest {
         entity.setStatus(status);
         entity.setFaultCode(faultCode);
         entity.setActualPower(actualPower);
+        return entity;
+    }
+
+    private RealDataEntity telemetryWithAlarm(Long id, String timestamp, LocalDateTime createTime,
+                                              String status, String faultCode, String alarmCode) {
+        RealDataEntity entity = telemetry(id, timestamp, null, null, createTime, status, faultCode, 10F);
+        entity.setAlarmCode(alarmCode);
         return entity;
     }
 

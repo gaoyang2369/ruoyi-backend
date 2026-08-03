@@ -19,6 +19,7 @@ import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
+import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.enums.KnowledgeLookupStatus;
@@ -26,6 +27,7 @@ import org.ruoyi.fault.domain.result.CandidateFault;
 import org.ruoyi.fault.domain.result.DiagnosisObservation;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
+import org.ruoyi.fault.evidence.enums.EvidenceType;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.application.FaultCodeKnowledgeQueryService;
@@ -134,17 +136,22 @@ class FaultDiagnosisChatServiceTest {
     }
 
     @Test
-    void rendersOnlyActualEvidenceCodesAndSourceDocuments() {
-        DiagnosisResult result = result(false, List.of(new EvidenceReference(1L, "EV-REAL")),
+    void rendersReadableEvidenceAndHidesInternalAuditSteps() {
+        DiagnosisResult result = result(false,
+            List.of(new EvidenceReference(1L, "EV-REAL", EvidenceType.TELEMETRY, "遥测记录",
+                    "设备A，共8条有效记录，出现 F100", true),
+                new EvidenceReference(2L, "EV-INTERNAL", EvidenceType.RULE_RESULT, "结果记录",
+                    "诊断结果组装完成", false)),
             List.of(new DiagnosisObservation("OBS", null, "检测到显式故障码", List.of(), List.of("EV-REAL", "EV-FAKE"))),
-            List.of(new CandidateFault("F100", KnowledgeLookupStatus.MATCHED,
+            List.of(new CandidateFault("F100", FaultCodeType.FAULT, KnowledgeLookupStatus.MATCHED,
                 List.of(new FaultKnowledgeEvidence(1L, "doc-1", "故障手册.pdf", "fragment-1", 1, "不得输出的长知识片段")),
-                List.of("EV-REAL", "EV-FAKE"))));
+                List.of("EV-REAL"))));
 
         String text = chatService.render(result);
 
-        assertTrue(text.contains("EV-REAL"));
+        assertTrue(text.contains("遥测记录（EV-REAL）：设备A，共8条有效记录，出现 F100"));
         assertFalse(text.contains("EV-FAKE"));
+        assertFalse(text.contains("EV-INTERNAL"));
         assertTrue(text.contains("故障手册.pdf"));
         assertFalse(text.contains("不得输出的长知识片段"));
     }
@@ -153,9 +160,18 @@ class FaultDiagnosisChatServiceTest {
     void doesNotInventEvidenceWhenNoneExistsAndExplainsPartialResult() {
         String text = chatService.render(result(true, List.of(), List.of(), List.of()));
 
-        assertTrue(text.contains("实际证据编号：无"));
+        assertTrue(text.contains("本次没有可引用的持久化证据"));
         assertFalse(text.contains("EV-001"));
         assertTrue(text.contains("本次结果为降级结果"));
+    }
+
+    @Test
+    void answerBodyDoesNotExposeInternalFields() {
+        String text = chatService.render(result(true, List.of(), List.of(), List.of()));
+
+        assertFalse(text.contains("request-1"));
+        assertFalse(text.contains("NO_EXPLICIT_FAULT"));
+        assertFalse(text.contains("partial"));
     }
 
     @Test
@@ -407,8 +423,10 @@ class FaultDiagnosisChatServiceTest {
     private static DiagnosisResult result(boolean partial, List<EvidenceReference> references,
                                           List<DiagnosisObservation> observations, List<CandidateFault> candidates) {
         return new DiagnosisResult("request-1", DiagnosisStatus.NO_EXPLICIT_FAULT, partial, "设备A", "逆变器A",
-            LocalDateTime.of(2026, 7, 1, 10, 0), LocalDateTime.of(2026, 7, 1, 10, 30), "症状",
-            new DataQualitySummary(10, 8, 1, 0, 2, 0.8D, true), null, List.of(), List.of(), observations,
-            candidates, List.of("建议检查连接"), List.of("遥测窗口有限"), references);
+            LocalDateTime.of(2026, 7, 1, 10, 0), LocalDateTime.of(2026, 7, 1, 10, 30),
+            LocalDateTime.of(2026, 7, 1, 10, 0), LocalDateTime.of(2026, 7, 1, 10, 30),
+            false, LocalDateTime.of(2026, 7, 1, 10, 29), "症状",
+            new DataQualitySummary(10, 8, 1, 0, 2, 0.8D, true), null, List.of(), List.of(), List.of(),
+            observations, candidates, List.of("建议检查连接"), List.of("遥测窗口有限"), references);
     }
 }

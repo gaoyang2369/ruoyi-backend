@@ -1,5 +1,6 @@
 package org.ruoyi.service.fault.model;
 
+import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.result.CandidateFault;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
@@ -23,27 +24,57 @@ public record FaultExecutionResult(FaultRequestPlan plan, DiagnosisResult diagno
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
     }
 
-    public Set<String> allowedEvidenceCodes() {
-        if (diagnosisResult == null) return Set.of();
-        Set<String> result = new LinkedHashSet<>();
+    /** 持久化证据编号，按诊断执行顺序返回有序列表，不依赖 Set 迭代顺序。 */
+    public List<String> allowedEvidenceCodes() {
+        if (diagnosisResult == null) return List.of();
+        LinkedHashSet<String> result = new LinkedHashSet<>();
         for (EvidenceReference reference : diagnosisResult.evidenceIndex()) {
             if (reference != null && reference.evidenceCode() != null && !reference.evidenceCode().isBlank()) result.add(reference.evidenceCode());
         }
-        return Set.copyOf(result);
+        return List.copyOf(result);
     }
 
-    /** 本次诊断结果中确实出现的故障码，不包含用户仅查询的码。 */
+    /** 按诊断执行顺序返回用户可见证据；内部审计步骤不进入普通回答。 */
+    public List<EvidenceReference> userVisibleEvidence() {
+        if (diagnosisResult == null) return List.of();
+        List<EvidenceReference> result = new ArrayList<>();
+        for (EvidenceReference reference : diagnosisResult.evidenceIndex()) {
+            if (reference != null && reference.userVisible() && reference.evidenceCode() != null
+                && !reference.evidenceCode().isBlank()) result.add(reference);
+        }
+        return List.copyOf(result);
+    }
+
+    /** 本次诊断结果中确实出现的 F 类故障码，不包含报警码，也不包含用户仅查询的码。 */
     public Set<String> observedFaultCodes() {
         if (diagnosisResult == null) return Set.of();
         Set<String> result = new LinkedHashSet<>();
-        diagnosisResult.candidateFaults().forEach(item -> addNormalized(result, item.faultCode()));
-        diagnosisResult.faultCodes().forEach(code -> addNormalized(result, code));
+        diagnosisResult.candidateFaults().forEach(item -> {
+            if (item.codeType() == FaultCodeType.FAULT) addNormalized(result, item.faultCode());
+        });
+        diagnosisResult.faultCodes().forEach(code -> {
+            if (FaultCodeType.isFault(code)) addNormalized(result, code);
+        });
         return Set.copyOf(result);
     }
 
-    /** 用户明确查询、但没有在本次遥测中确认出现的故障码。 */
-    public Set<String> queriedOnlyFaultCodes() {
-        Set<String> observed = observedFaultCodes();
+    /** 本次诊断结果中确实出现的 A 类报警码。 */
+    public Set<String> observedAlarmCodes() {
+        if (diagnosisResult == null) return Set.of();
+        Set<String> result = new LinkedHashSet<>();
+        diagnosisResult.candidateFaults().forEach(item -> {
+            if (item.codeType() == FaultCodeType.ALARM) addNormalized(result, item.faultCode());
+        });
+        diagnosisResult.alarmCodes().forEach(code -> {
+            if (FaultCodeType.isAlarm(code)) addNormalized(result, code);
+        });
+        return Set.copyOf(result);
+    }
+
+    /** 用户明确查询、但没有在本次遥测中确认出现的故障/报警码。 */
+    public Set<String> queriedOnlyCodes() {
+        Set<String> observed = new LinkedHashSet<>(observedFaultCodes());
+        observed.addAll(observedAlarmCodes());
         Set<String> result = new LinkedHashSet<>();
         if (plan != null) plan.faultCodes().forEach(code -> {
             String normalized = normalize(code);

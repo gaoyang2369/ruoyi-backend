@@ -14,16 +14,14 @@ import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.fault.application.FaultCodeKnowledgeQueryService;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
+import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
 import org.ruoyi.fault.domain.result.CandidateFault;
-import org.ruoyi.fault.domain.result.DiagnosisObservation;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
-import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
-import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
@@ -85,10 +83,10 @@ public class FaultDiagnosisChatService {
         if (diagnosis == null && normalized.plan().tasks().contains(FaultTaskType.EXPLAIN_FAULT_CODE)) {
             return answerKnowledgeQuery(request, agent, model, normalized.plan(), execution, requestId, startNanos);
         }
+        // 结论、时间边界、观测列表和证据摘要由服务端确定性渲染；模型只生成代码说明与建议。
         String body = generateValidatedAnswer(model, request.getContent(), normalized.plan(), execution, agent,
             true, requestId, startNanos);
-        if (body == null) body = renderFallback(diagnosis);
-        return renderDeterministicFacts(execution) + "\n\n分析说明：\n" + body + appendEvidenceAndSources(execution);
+        return FaultDiagnosisAnswerRenderer.render(execution, body);
     }
 
     private String answerKnowledgeQuery(ChatRequest request, AgentVo agent, ChatModel model, FaultRequestPlan plan,
@@ -171,6 +169,7 @@ public class FaultDiagnosisChatService {
                                     long startNanos, FallbackReason reason, RuntimeException exception) {
         Set<String> faultCodes = new LinkedHashSet<>(plan.faultCodes());
         faultCodes.addAll(execution.observedFaultCodes());
+        faultCodes.addAll(execution.observedAlarmCodes());
         log.warn("故障回答进入降级路径: requestId={}, taskType={}, faultCode={}, elapsedMs={}, "
                 + "fallbackReason={}, errorType={}",
             requestId, plan.tasks(), faultCodes, elapsedMillis(startNanos), reason,
@@ -279,14 +278,10 @@ public class FaultDiagnosisChatService {
         if (!AgentExecutionMode.DETERMINISTIC.name().equals(agent.getExecutionMode())) throw new ServiceException("故障诊断Agent执行方式必须为DETERMINISTIC: " + agent.getId());
     }
 
+    /** 降级回答同样使用统一骨架：模型部分由服务端确定性内容填充，不展示内部字段。 */
     String renderFallback(DiagnosisResult result) {
-        Set<String> actual = actualEvidenceCodes(result.evidenceIndex()); StringBuilder text = new StringBuilder("故障诊断结果\n");
-        text.append("诊断状态：").append(statusText(result)).append('\n').append("partial：").append(result.partial() ? "是" : "否").append('\n');
-        text.append("设备：").append(valueOrNone(result.deviceName())).append('\n').append("逆变器：").append(valueOrNone(result.inverterName())).append('\n');
-        text.append("实际分析时间：").append(formatTime(result.startTime())).append(" 至 ").append(formatTime(result.endTime())).append('\n');
-        text.append("数据质量摘要：").append(dataQualityText(result.dataQuality())).append('\n');
-        appendObservations(text, result.observations(), actual); appendCandidates(text, result.candidateFaults(), actual); appendStrings(text, "建议", result.recommendations()); appendLimitations(text, result.limitations(), result.partial());
-        text.append("实际证据编号：").append(joinOrNone(actual)).append('\n').append("requestId：").append(valueOrNone(result.requestId())); return text.toString();
+        FaultExecutionResult execution = new FaultExecutionResult(null, result, Map.of(), result.limitations());
+        return FaultDiagnosisAnswerRenderer.render(execution, null);
     }
     /** 保留原包内测试兼容名。 */ String render(DiagnosisResult result) { return renderFallback(result); }
     private static String renderKnowledgeFallback(List<String> faultCodes, Map<String, FaultKnowledgeResult> results,
@@ -298,7 +293,7 @@ public class FaultDiagnosisChatService {
         StringBuilder out = new StringBuilder();
         for (String faultCode : faultCodes) {
             if (!out.isEmpty()) out.append("\n\n");
-            out.append("故障码知识查询：").append(faultCode).append('\n');
+            out.append(FaultCodeType.isAlarm(faultCode) ? "报警码知识查询：" : "故障码知识查询：").append(faultCode).append('\n');
             if (knowledgeIds == null || knowledgeIds.isEmpty()) {
                 out.append("\n当前 Agent 未绑定故障知识库，无法查询该故障码。");
                 continue;
@@ -324,7 +319,8 @@ public class FaultDiagnosisChatService {
 
     private static String renderKnowledgeModelAnswer(List<String> faultCodes, String body,
                                                      Map<String, FaultKnowledgeResult> results) {
-        StringBuilder out = new StringBuilder("故障码知识查询：")
+        boolean alarmOnly = !faultCodes.isEmpty() && faultCodes.stream().allMatch(FaultCodeType::isAlarm);
+        StringBuilder out = new StringBuilder(alarmOnly ? "报警码知识查询：" : "故障码知识查询：")
             .append(String.join("、", faultCodes))
             .append("\n\n")
             .append(body.trim());
@@ -359,45 +355,8 @@ public class FaultDiagnosisChatService {
         out.append("\n\n说明：本次仅查询故障手册，未读取设备遥测数据。");
     }
 
-    private static String renderDeterministicFacts(FaultExecutionResult execution) {
-        DiagnosisResult result = execution.diagnosisResult();
-        StringBuilder out = new StringBuilder("确定性诊断事实：\n");
-        if (result == null) out.append("诊断状态：未执行设备遥测诊断\n");
-        else {
-            out.append("诊断状态：").append(statusText(result)).append('\n');
-            out.append("设备：").append(valueOrNone(result.deviceName())).append('\n');
-            out.append("实际分析时间：").append(formatTime(result.startTime())).append(" 至 ").append(formatTime(result.endTime())).append('\n');
-            out.append("数据质量摘要：").append(dataQualityText(result.dataQuality())).append('\n');
-        }
-        if (execution.observedFaultCodes().isEmpty()) out.append("本次遥测范围内未确认出现显式故障码。\n");
-        else out.append("本次遥测实际观测到的故障码：").append(String.join("、", execution.observedFaultCodes())).append('\n');
-        if (!execution.queriedOnlyFaultCodes().isEmpty()) out.append("以下故障码仅进行知识查询，未确认在本次遥测范围内出现：")
-            .append(String.join("、", execution.queriedOnlyFaultCodes())).append("。\n");
-        return out.toString().trim();
-    }
-    private static String appendEvidenceAndSources(FaultExecutionResult execution) {
-        StringBuilder out = new StringBuilder("\n\n证据与来源：\n"); Set<String> codes = execution.allowedEvidenceCodes();
-        if (!codes.isEmpty()) out.append("真实证据编号：").append(String.join("、", codes)).append('\n');
-        for (FaultExecutionResult.KnowledgeSource source : execution.knowledgeSourcesWithFaultCode()) {
-            FaultKnowledgeEvidence item = source.evidence();
-            out.append("知识来源：").append(valueOrNone(source.faultCode())).append(" - ")
-            .append(StringUtils.isNotBlank(item.sourceDocument()) ? item.sourceDocument() : valueOrNone(item.documentId()))
-            .append(item.fragmentId() == null ? "" : " / " + item.fragmentId()).append('\n');
-        }
-        if (codes.isEmpty() && execution.knowledgeSourcesWithFaultCode().isEmpty()) out.append("本次没有可引用的持久化证据或知识来源"); return out.toString().trim();
-    }
-    private static void appendObservations(StringBuilder text, List<DiagnosisObservation> observations, Set<String> actual) { text.append("观测事实：\n"); if (observations == null || observations.isEmpty()) { text.append("- 无\n"); return; } for (DiagnosisObservation o : observations) { text.append("- ").append(valueOrNone(o.message())); appendEvidenceCodes(text, o.evidenceCodes(), actual); text.append('\n'); } }
-    private static void appendCandidates(StringBuilder text, List<CandidateFault> candidates, Set<String> actual) { text.append("候选故障：\n"); if (candidates == null || candidates.isEmpty()) { text.append("- 无\n"); return; } for (CandidateFault c : candidates) { text.append("- ").append(valueOrNone(c.faultCode())); if (c.knowledgeStatus() != null) text.append("（知识查询：").append(c.knowledgeStatus()).append('）'); Set<String> sources = sourceDocuments(c.knowledgeEvidence()); if (!sources.isEmpty()) text.append("；来源文档：").append(String.join("、", sources)); appendEvidenceCodes(text, c.evidenceCodes(), actual); text.append('\n'); } }
-    private static void appendStrings(StringBuilder text, String title, List<String> values) { text.append(title).append("：\n"); if (values == null || values.isEmpty()) { text.append("- 无\n"); return; } for (String value : values) text.append("- ").append(valueOrNone(value)).append('\n'); }
-    private static void appendLimitations(StringBuilder text, List<String> values, boolean partial) { text.append("限制说明：\n"); if (partial) text.append("- 本次结果为降级结果，请结合限制说明谨慎处理。\n"); if (values == null || values.isEmpty()) { if (!partial) text.append("- 无\n"); return; } for (String value : values) text.append("- ").append(valueOrNone(value)).append('\n'); }
-    private static Set<String> actualEvidenceCodes(List<EvidenceReference> evidence) { return evidence == null ? Set.of() : evidence.stream().map(EvidenceReference::evidenceCode).filter(StringUtils::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new)); }
-    private static Set<String> sourceDocuments(List<FaultKnowledgeEvidence> evidence) { return evidence == null ? Set.of() : evidence.stream().map(item -> StringUtils.isNotBlank(item.sourceDocument()) ? item.sourceDocument() : item.documentId()).filter(StringUtils::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new)); }
-    private static void appendEvidenceCodes(StringBuilder text, List<String> requested, Set<String> actual) { if (requested == null) return; List<String> codes = requested.stream().filter(actual::contains).toList(); if (!codes.isEmpty()) text.append("；证据：").append(String.join("、", codes)); }
-    private static String statusText(DiagnosisResult result) { return result.status() == null ? "未知" : switch (result.status()) { case DATA_INSUFFICIENT -> "数据不足"; case FAULT_DETECTED -> "检测到显式故障"; case WARNING_DETECTED -> "检测到报警"; case NO_EXPLICIT_FAULT -> "未发现显式故障"; }; }
-    private static String dataQualityText(DataQualitySummary quality) { return quality == null ? "无数据质量摘要" : "原始记录" + quality.rawRecordCount() + "条，有效记录" + quality.validRecordCount() + "条，重复" + quality.duplicateCount() + "条，无效时间" + quality.invalidTimeCount() + "条，缺口" + quality.gapCount() + "个，完整度" + quality.completeness() + "，数据" + (quality.sufficient() ? "充足" : "不足"); }
     private static String formatTime(LocalDateTime value) { return value == null ? "无" : TIME_FORMATTER.format(value); }
     private static String valueOrNone(String value) { return StringUtils.isBlank(value) ? "无" : value; }
-    private static String joinOrNone(Set<String> values) { return values == null || values.isEmpty() ? "无" : String.join("、", values); }
     private enum FallbackReason { MODEL_EXCEPTION, EMPTY_MODEL_ANSWER, SAFETY_VALIDATION_REJECTED }
     private record TimeRange(LocalDateTime start, LocalDateTime end) { }
     private record NormalizedPlan(FaultRequestPlan plan, DiagnosisCommand command, String clarification) { static NormalizedPlan ready(FaultRequestPlan p, DiagnosisCommand c) { return new NormalizedPlan(p, c, null); } static NormalizedPlan clarify(String message) { return new NormalizedPlan(null, null, message); } }

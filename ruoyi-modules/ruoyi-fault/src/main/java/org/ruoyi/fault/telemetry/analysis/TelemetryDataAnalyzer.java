@@ -2,6 +2,7 @@ package org.ruoyi.fault.telemetry.analysis;
 
 import lombok.RequiredArgsConstructor;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
+import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
@@ -23,6 +24,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -59,14 +61,16 @@ public class TelemetryDataAnalyzer {
 
         DataQualitySummary quality = buildQuality(rawRecords.size(), validRecords, deduplication.duplicateCount(),
             parseResult.invalidTimeCount(), startTime, endTime);
-        List<String> faultCodes = distinctFaultCodes(validRecords);
-        List<String> alarmCodes = distinctCodes(validRecords, RealDataEntity::getAlarmCode);
+        CodeExtraction codes = extractClassifiedCodes(validRecords);
         List<StatusEvent> statusEvents = buildStatusEvents(validRecords);
         TelemetryStatistics statistics = buildStatistics(validRecords);
         String sourceDigest = sourceDigest(deviceName, inverterName, startTime, endTime, rawRecords, quality);
+        LocalDateTime latestObservedAt = validRecords.isEmpty()
+            ? null : validRecords.get(validRecords.size() - 1).observedAt();
 
-        return new TelemetryQueryResult(deviceName, startTime, endTime, quality, faultCodes, alarmCodes,
-            statusEvents, statistics, sourceDigest, false);
+        return new TelemetryQueryResult(deviceName, startTime, endTime, quality, codes.faultCodes(),
+            codes.alarmCodes(), codes.unknownCodes(), statusEvents, statistics, sourceDigest, false,
+            latestObservedAt, codes.notes());
     }
 
     /**
@@ -193,44 +197,69 @@ public class TelemetryDataAnalyzer {
     }
 
     /**
-     * 按业务时间顺序提取非空且不重复的故障码或报警码。
+     * 按业务时间顺序提取 {@code fault_code} 与 {@code alarm_code} 两个字段中的代码，
+     * 并按 G120 前缀规则统一归类。
+     * <p>
+     * 字段名不作为分类依据：{@code fault_code=A07089} 会被归入报警码，并记录
+     * “字段与代码类型不一致”的数据质量问题；未识别格式进入 unknownCodes，不升级为故障。
      */
-    private List<String> distinctCodes(List<TimedRecord> records, Function<RealDataEntity, String> extractor) {
-        LinkedHashSet<String> codes = new LinkedHashSet<>();
+    private CodeExtraction extractClassifiedCodes(List<TimedRecord> records) {
+        LinkedHashSet<String> faults = new LinkedHashSet<>();
+        LinkedHashSet<String> alarms = new LinkedHashSet<>();
+        LinkedHashSet<String> unknowns = new LinkedHashSet<>();
+        LinkedHashSet<String> notes = new LinkedHashSet<>();
         for (TimedRecord record : records) {
-            String code = normalize(extractor.apply(record.data()));
-            if (code != null) {
-                codes.add(code);
-            }
+            accumulateClassifiedCode(faults, alarms, unknowns, notes, record.data().getFaultCode(), "fault_code");
+            accumulateClassifiedCode(faults, alarms, unknowns, notes, record.data().getAlarmCode(), "alarm_code");
         }
-        return List.copyOf(codes);
+        return new CodeExtraction(List.copyOf(faults), List.copyOf(alarms), List.copyOf(unknowns),
+            List.copyOf(notes));
     }
 
-    /**
-     * 采集库约定 fault_code 的裸值 {@code 0} 表示无故障，不是可查询的故障码。
-     * 保持该约定在遥测边界，避免它进入诊断编排和知识库检索。
-     */
-    private List<String> distinctFaultCodes(List<TimedRecord> records) {
-        LinkedHashSet<String> codes = new LinkedHashSet<>();
-        for (TimedRecord record : records) {
-            String code = normalizeFaultCode(record.data().getFaultCode());
-            if (code != null) {
-                codes.add(code);
+    private void accumulateClassifiedCode(LinkedHashSet<String> faults, LinkedHashSet<String> alarms,
+                                          LinkedHashSet<String> unknowns, LinkedHashSet<String> notes,
+                                          String rawValue, String fieldName) {
+        String trimmed = normalize(rawValue);
+        if (trimmed == null) {
+            return;
+        }
+        // G120 代码规范形式为大写，遥测边界统一转换，保证展示与知识查询口径一致。
+        String code = trimmed.toUpperCase(Locale.ROOT);
+        switch (FaultCodeType.classify(code)) {
+            case NONE -> {
+                // 裸 0 或空白：采集库约定为无代码，不进入诊断编排和知识库检索。
+            }
+            case FAULT -> {
+                if ("alarm_code".equals(fieldName)) {
+                    notes.add(fieldName + " 字段出现 F 类故障码 " + code + "，字段与代码类型不一致，已按代码前缀归类为故障");
+                }
+                faults.add(code);
+            }
+            case ALARM -> {
+                if ("fault_code".equals(fieldName)) {
+                    notes.add(fieldName + " 字段出现 A 类报警码 " + code + "，字段与代码类型不一致，已按 G120 规则归类为报警");
+                }
+                alarms.add(code);
+            }
+            case UNKNOWN -> {
+                notes.add("遥测中出现未识别代码 " + code + "，未升级为故障或报警");
+                unknowns.add(code);
             }
         }
-        return List.copyOf(codes);
     }
 
     /**
      * 仅在 status、faultCode、alarmCode 三元组发生变化时生成事件，避免逐行传输遥测状态。
+     * 事件中的代码同样按 G120 规则归类，与诊断编排口径一致。
      */
     private List<StatusEvent> buildStatusEvents(List<TimedRecord> records) {
         List<StatusEvent> events = new ArrayList<>();
         String previousSignature = null;
         for (TimedRecord record : records) {
             String status = normalize(record.data().getStatus());
-            String faultCode = normalizeFaultCode(record.data().getFaultCode());
-            String alarmCode = normalize(record.data().getAlarmCode());
+            String[] classified = classifyRecordCodes(record.data());
+            String faultCode = classified[0];
+            String alarmCode = classified[1];
             if (status == null && faultCode == null && alarmCode == null) {
                 continue;
             }
@@ -241,6 +270,29 @@ public class TelemetryDataAnalyzer {
             }
         }
         return List.copyOf(events);
+    }
+
+    /**
+     * 将一条记录的 fault_code 与 alarm_code 字段归类为 [故障码, 报警码] 二元组，
+     * 两个字段均参与两种类型的归集，未识别格式不出现在事件中。
+     */
+    private String[] classifyRecordCodes(RealDataEntity data) {
+        String faultCode = null;
+        String alarmCode = null;
+        for (String rawValue : new String[]{data.getFaultCode(), data.getAlarmCode()}) {
+            String trimmed = normalize(rawValue);
+            if (trimmed == null) {
+                continue;
+            }
+            String code = trimmed.toUpperCase(Locale.ROOT);
+            switch (FaultCodeType.classify(code)) {
+                case FAULT -> faultCode = code;
+                case ALARM -> alarmCode = code;
+                default -> {
+                }
+            }
+        }
+        return new String[]{faultCode, alarmCode};
     }
 
     /**
@@ -316,11 +368,6 @@ public class TelemetryDataAnalyzer {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
-    private String normalizeFaultCode(String value) {
-        String normalized = normalize(value);
-        return "0".equals(normalized) ? null : normalized;
-    }
-
     /**
      * 构造事件状态签名时，将 null 转为空字符串以保持字段位置稳定。
      */
@@ -346,6 +393,11 @@ public class TelemetryDataAnalyzer {
 
     /** 单个数值指标的统计摘要。 */
     private record NumericSummary(Double min, Double max, Double average) {
+    }
+
+    /** 按 G120 规则归类后的代码提取结果。 */
+    private record CodeExtraction(List<String> faultCodes, List<String> alarmCodes, List<String> unknownCodes,
+                                  List<String> notes) {
     }
 
 }
