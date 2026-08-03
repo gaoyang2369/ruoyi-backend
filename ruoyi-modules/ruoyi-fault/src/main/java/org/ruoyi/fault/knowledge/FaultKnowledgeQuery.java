@@ -36,6 +36,9 @@ public record FaultKnowledgeQuery(
     /** 故障码统一清理并转换为大写，供端口调用方复用。 */
     public static String normalizeFaultCode(String faultCode) {
         String normalized = normalizeRequired(faultCode, "故障码不能为空");
+        if ("0".equals(normalized)) {
+            throw new IllegalArgumentException("故障码 0 表示无故障，不能查询故障知识");
+        }
         if (!FAULT_CODE_PATTERN.matcher(normalized).matches()) {
             throw new IllegalArgumentException("故障码格式无效");
         }

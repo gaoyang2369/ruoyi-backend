@@ -79,6 +79,13 @@ class AgentFaultKnowledgeQueryFactoryTest {
         assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "F30005!"));
     }
 
+    @Test
+    void rejectsBareZeroBecauseItRepresentsNoFault() {
+        when(agentService.queryById(7L)).thenReturn(enabledFaultDiagnosisAgent());
+
+        assertThrows(ServiceException.class, () -> queryFactory.fromAgent(7L, "0"));
+    }
+
     private AgentVo enabledFaultDiagnosisAgent() {
         AgentVo agent = new AgentVo();
         agent.setStatus("0");

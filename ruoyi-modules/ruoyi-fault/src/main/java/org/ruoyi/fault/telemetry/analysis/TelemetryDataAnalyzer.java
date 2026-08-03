@@ -59,7 +59,7 @@ public class TelemetryDataAnalyzer {
 
         DataQualitySummary quality = buildQuality(rawRecords.size(), validRecords, deduplication.duplicateCount(),
             parseResult.invalidTimeCount(), startTime, endTime);
-        List<String> faultCodes = distinctCodes(validRecords, RealDataEntity::getFaultCode);
+        List<String> faultCodes = distinctFaultCodes(validRecords);
         List<String> alarmCodes = distinctCodes(validRecords, RealDataEntity::getAlarmCode);
         List<StatusEvent> statusEvents = buildStatusEvents(validRecords);
         TelemetryStatistics statistics = buildStatistics(validRecords);
@@ -207,6 +207,21 @@ public class TelemetryDataAnalyzer {
     }
 
     /**
+     * 采集库约定 fault_code 的裸值 {@code 0} 表示无故障，不是可查询的故障码。
+     * 保持该约定在遥测边界，避免它进入诊断编排和知识库检索。
+     */
+    private List<String> distinctFaultCodes(List<TimedRecord> records) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        for (TimedRecord record : records) {
+            String code = normalizeFaultCode(record.data().getFaultCode());
+            if (code != null) {
+                codes.add(code);
+            }
+        }
+        return List.copyOf(codes);
+    }
+
+    /**
      * 仅在 status、faultCode、alarmCode 三元组发生变化时生成事件，避免逐行传输遥测状态。
      */
     private List<StatusEvent> buildStatusEvents(List<TimedRecord> records) {
@@ -214,7 +229,7 @@ public class TelemetryDataAnalyzer {
         String previousSignature = null;
         for (TimedRecord record : records) {
             String status = normalize(record.data().getStatus());
-            String faultCode = normalize(record.data().getFaultCode());
+            String faultCode = normalizeFaultCode(record.data().getFaultCode());
             String alarmCode = normalize(record.data().getAlarmCode());
             if (status == null && faultCode == null && alarmCode == null) {
                 continue;
@@ -299,6 +314,11 @@ public class TelemetryDataAnalyzer {
      */
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeFaultCode(String value) {
+        String normalized = normalize(value);
+        return "0".equals(normalized) ? null : normalized;
     }
 
     /**

@@ -75,6 +75,18 @@ class TelemetryDataAnalyzerTest {
         assertNotEquals(before.sourceDigest(), after.sourceDigest());
     }
 
+    @Test
+    void treatsBareZeroFaultCodeAsNoFault() {
+        RealDataEntity record = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(1), "RUNNING", " 0 ", 10F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, END_TIME, List.of(record));
+
+        assertEquals(List.of(), result.faultCodes());
+        assertEquals(1, result.statusEvents().size());
+        assertEquals(null, result.statusEvents().get(0).faultCode());
+    }
+
     /**
      * 构造一条仅包含本测试所需字段的 real_data 记录。
      */

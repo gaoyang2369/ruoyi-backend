@@ -101,6 +101,17 @@ class FaultDiagnosisOrchestratorTest {
     }
 
     @Test
+    void doesNotQueryKnowledgeForBareZeroFaultCode() {
+        when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
+            .thenReturn(telemetry(true, List.of("0"), List.of()));
+
+        DiagnosisResult result = orchestrator.diagnose(command(List.of(7L)));
+
+        verify(faultKnowledgePort, never()).query(any());
+        assertEquals(List.of(), result.candidateFaults());
+    }
+
+    @Test
     void telemetryEvidenceDigestIsStoredWithoutAlgorithmPrefix() {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         TelemetryQueryResult prefixed = new TelemetryQueryResult("device", start, start.plusMinutes(5),

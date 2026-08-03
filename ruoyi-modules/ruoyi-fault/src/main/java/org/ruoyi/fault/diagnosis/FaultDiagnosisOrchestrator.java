@@ -80,6 +80,10 @@ public class FaultDiagnosisOrchestrator {
             for (String value : telemetryFaultCodes) {
                 if (value != null && !value.isBlank()) {
                     String trimmed = value.trim();
+                    // 遥测库约定裸值 0 为无故障；即使上游绕过分析器，也绝不能检索知识库。
+                    if ("0".equals(trimmed)) {
+                        continue;
+                    }
                     try {
                         uniqueCodes.add(FaultKnowledgeQuery.normalizeFaultCode(trimmed));
                     } catch (RuntimeException ignored) {
