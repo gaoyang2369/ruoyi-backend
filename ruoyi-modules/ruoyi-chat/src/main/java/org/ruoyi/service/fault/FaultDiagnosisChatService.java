@@ -24,6 +24,7 @@ import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
+import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
 import org.ruoyi.service.fault.model.FaultKnowledgeAnswerDraft;
@@ -58,6 +59,7 @@ public class FaultDiagnosisChatService {
     private final FaultAnswerSafetyValidator faultAnswerSafetyValidator;
     private final FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     private final IChatMessageService chatMessageService;
+    private final TelemetryQueryService telemetryQueryService;
 
     /** 仅供结构化兼容测试或内部回退使用，不作为生产聊天入口。 */
     @Deprecated
@@ -217,10 +219,19 @@ public class FaultDiagnosisChatService {
         catch (IllegalArgumentException ex) { return NormalizedPlan.clarify("故障码格式无效，请提供例如 F30005 的故障码。"); }
         if (tasks.contains(FaultTaskType.EXPLAIN_FAULT_CODE) && codes.isEmpty()) return NormalizedPlan.clarify("请提供需要说明的故障码。");
         if (!tasks.contains(FaultTaskType.DIAGNOSE)) return NormalizedPlan.ready(new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), proposed.startTime(), proposed.endTime(), codes, proposed.symptom(), proposed.requestedAspects()), null);
-        if (StringUtils.isBlank(proposed.deviceName()) || StringUtils.isBlank(proposed.inverterName())) return NormalizedPlan.clarify("请补充需要诊断的设备名称和逆变器名称。");
+        if (StringUtils.isBlank(proposed.deviceName())) return NormalizedPlan.clarify("请补充需要诊断的设备名称。");
         TimeRange range = timeRange(proposed);
         if (range == null) return NormalizedPlan.clarify("请同时提供开始和结束时间，或提供有效的最近分钟数。");
-        FaultRequestPlan plan = new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), formatTime(range.start()), formatTime(range.end()), codes, proposed.symptom(), proposed.requestedAspects());
+        // 逆变器可选：用户未指明时由遥测数据确定性补全，而不是要求用户补充一个他们通常不知道的名称。
+        String inverterName = proposed.inverterName();
+        if (StringUtils.isBlank(inverterName)) {
+            try {
+                inverterName = telemetryQueryService.resolveInverterName(proposed.deviceName());
+            } catch (ServiceException ex) {
+                return NormalizedPlan.clarify(ex.getMessage());
+            }
+        }
+        FaultRequestPlan plan = new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), inverterName, proposed.recentMinutes(), formatTime(range.start()), formatTime(range.end()), codes, proposed.symptom(), proposed.requestedAspects());
         return NormalizedPlan.ready(plan, command(request, agent, userId, tenantId, plan.deviceName(),
             plan.inverterName(), range.start(), range.end(),
             StringUtils.isNotBlank(plan.symptom()) ? plan.symptom() : request.getContent(), requestId));

@@ -46,6 +46,18 @@ public interface RealDataMapper extends BaseMapperPlus<RealDataEntity, RealDataE
                                          @Param("queryEnd") LocalDateTime queryEnd);
 
     /**
+     * 查询设备在表内出现过的全部逆变器名称，用于用户未指明逆变器时的确定性补全。
+     */
+    @Select("""
+        SELECT DISTINCT inverter_name
+        FROM ${tableName}
+        WHERE device_name = #{deviceName}
+        ORDER BY inverter_name ASC
+        """)
+    List<String> selectDistinctInverterNames(@Param("tableName") String tableName,
+                                             @Param("deviceName") String deviceName);
+
+    /**
      * 查询该设备在表内最新的入库时间，用于最新数据回退窗口定位。
      */
     @Select("""

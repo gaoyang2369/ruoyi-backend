@@ -164,6 +164,45 @@ class FaultRequestPlannerTest {
         org.mockito.Mockito.verify(model).chat(any(dev.langchain4j.model.chat.request.ChatRequest.class));
     }
 
+    @Test
+    void parsesObjectStyleTaskEntriesFromModelOutput() {
+        // 线上真实漂移：模型把 tasks 写成对象数组，顶层字段同时重复出现在任务对象内。
+        ChatModel model = model("""
+            {"tasks":[{"type":"DIAGNOSE","deviceName":"G120电机1","inverterName":null,"recentMinutes":30,"startTime":null,"endTime":null,"faultCodes":[],"symptom":"现在运行情况如何","requestedAspects":["运行状态"]}],"deviceName":"G120电机1","inverterName":null,"recentMinutes":30,"startTime":null,"endTime":null,"faultCodes":[],"symptom":"现在运行情况如何","requestedAspects":["运行状态"]}
+            """);
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120电机1"),
+            "G120电机1现在运行状态如何？", "r14");
+
+        assertEquals(List.of(FaultTaskType.DIAGNOSE), plan.tasks());
+        assertEquals("G120电机1", plan.deviceName());
+        assertEquals(30, plan.recentMinutes());
+        assertEquals("现在运行情况如何", plan.symptom());
+        assertEquals(List.of("运行状态"), plan.requestedAspects());
+        org.mockito.Mockito.verify(model, times(1)).chat(any(dev.langchain4j.model.chat.request.ChatRequest.class));
+    }
+
+    @Test
+    void parsesLowercaseSingleTaskValue() {
+        ChatModel model = model("{\"tasks\":\"diagnose\",\"deviceName\":\"G120\",\"inverterName\":\"INV-1\"}");
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120"),
+            "问题", "r15");
+
+        assertEquals(List.of(FaultTaskType.DIAGNOSE), plan.tasks());
+    }
+
+    @Test
+    void parsesMixedTaskEntryShapes() {
+        ChatModel model = model("{\"tasks\":[{\"type\":\"EXPLAIN_FAULT_CODE\"},\"DIAGNOSE\"],"
+            + "\"deviceName\":\"G120\",\"inverterName\":\"INV-1\",\"faultCodes\":[\"F30005\"]}");
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120"),
+            "问题", "r16");
+
+        assertEquals(List.of(FaultTaskType.EXPLAIN_FAULT_CODE, FaultTaskType.DIAGNOSE), plan.tasks());
+    }
+
     private static FaultRequestPlanner planner() { return new FaultRequestPlanner(new ObjectMapper()); }
     private static LocalDateTime now() { return LocalDateTime.of(2026, 7, 27, 10, 0); }
     private static ChatModel model(String text) {

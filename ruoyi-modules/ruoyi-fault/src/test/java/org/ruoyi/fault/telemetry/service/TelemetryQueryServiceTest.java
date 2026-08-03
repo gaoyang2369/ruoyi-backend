@@ -172,6 +172,46 @@ class TelemetryQueryServiceTest {
         verify(realDataMapper, never()).selectTelemetry(anyString(), anyString(), anyString(), any(), any());
     }
 
+    @Test
+    void resolvesSoleInverterForAllowedDevice() {
+        when(realDataMapper.selectDistinctInverterNames("real_data_01", DEVICE_ONE)).thenReturn(List.of(DEVICE_ONE));
+
+        assertEquals(DEVICE_ONE, service.resolveInverterName(DEVICE_ONE));
+        verify(realDataMapper, never()).selectTelemetry(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void resolveIgnoresBlankInverterNames() {
+        when(realDataMapper.selectDistinctInverterNames("real_data_01", DEVICE_ONE))
+            .thenReturn(java.util.Arrays.asList(DEVICE_ONE, null, " "));
+
+        assertEquals(DEVICE_ONE, service.resolveInverterName(DEVICE_ONE));
+    }
+
+    @Test
+    void rejectsResolveWhenDeviceHasMultipleInverters() {
+        when(realDataMapper.selectDistinctInverterNames("real_data_01", DEVICE_ONE))
+            .thenReturn(List.of("逆变器1", "逆变器2"));
+
+        ServiceException exception = assertThrows(ServiceException.class, () -> service.resolveInverterName(DEVICE_ONE));
+        assertTrue(exception.getMessage().contains("逆变器1、逆变器2"));
+    }
+
+    @Test
+    void rejectsResolveWhenDeviceHasNoTelemetry() {
+        when(realDataMapper.selectDistinctInverterNames("real_data_01", DEVICE_ONE)).thenReturn(List.of());
+
+        ServiceException exception = assertThrows(ServiceException.class, () -> service.resolveInverterName(DEVICE_ONE));
+        assertTrue(exception.getMessage().contains("未找到设备"));
+    }
+
+    @Test
+    void rejectsResolveForDeviceOutsideAllowList() {
+        ServiceException exception = assertThrows(ServiceException.class, () -> service.resolveInverterName("未授权设备"));
+        assertTrue(exception.getMessage().contains("当前无设备诊断权限"));
+        verify(realDataMapper, never()).selectDistinctInverterNames(anyString(), anyString());
+    }
+
     private static RealDataEntity entity(String timestamp) {
         RealDataEntity record = new RealDataEntity();
         record.setId(1L);

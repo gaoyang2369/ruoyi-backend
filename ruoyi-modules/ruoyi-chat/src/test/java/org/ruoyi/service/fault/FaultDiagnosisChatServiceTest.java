@@ -65,6 +65,7 @@ class FaultDiagnosisChatServiceTest {
     @Mock private FaultAnswerSafetyValidator faultAnswerSafetyValidator;
     @Mock private FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     @Mock private IChatMessageService chatMessageService;
+    @Mock private org.ruoyi.fault.telemetry.service.TelemetryQueryService telemetryQueryService;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -275,6 +276,45 @@ class FaultDiagnosisChatServiceTest {
         assertTrue(answer.contains("知识查询失败，请稍后重试"));
         assertFalse(answer.contains("未找到与该故障码精确匹配的内容"));
         verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
+    }
+
+    @Test
+    void resolvesBlankInverterFromTelemetryBeforeDiagnosing() {
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.DIAGNOSE), "设备A", null, null,
+            null, null, List.of(), "症状", List.of());
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
+        when(faultDiagnosisOrchestrator.diagnose(any())).thenReturn(result(false, List.of(), List.of(), List.of()));
+        ChatRequest request = new ChatRequest();
+        request.setContent("设备A 现在运行状态如何？");
+        request.setSessionId(9L);
+
+        chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
+
+        ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
+        verify(faultDiagnosisOrchestrator).diagnose(captor.capture());
+        assertEquals("设备A", captor.getValue().deviceName());
+        assertEquals("逆变器A", captor.getValue().inverterName());
+    }
+
+    @Test
+    void clarifiesWhenDeviceHasMultipleInvertersInsteadOfDiagnosing() {
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.DIAGNOSE), "设备A", null, null,
+            null, null, List.of(), "症状", List.of());
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(telemetryQueryService.resolveInverterName("设备A"))
+            .thenThrow(new ServiceException("设备 设备A 下存在多个逆变器（逆变器1、逆变器2），请在问题中指明要诊断的逆变器"));
+        ChatRequest request = new ChatRequest();
+        request.setContent("设备A 现在运行状态如何？");
+        request.setSessionId(9L);
+
+        String answer = chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
+
+        assertEquals("设备 设备A 下存在多个逆变器（逆变器1、逆变器2），请在问题中指明要诊断的逆变器", answer);
+        verify(faultDiagnosisOrchestrator, never()).diagnose(any());
     }
 
     private static ChatRequest requestWithTimes() {

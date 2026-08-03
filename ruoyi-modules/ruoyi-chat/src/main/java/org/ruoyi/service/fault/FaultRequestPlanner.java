@@ -1,8 +1,10 @@
 package org.ruoyi.service.fault;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -15,8 +17,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.service.fault.model.FaultRequestPlan;
+import org.ruoyi.service.fault.model.FaultTaskType;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -44,8 +48,10 @@ public class FaultRequestPlanner {
         Pattern.compile("[\\s,，、;；/|和及与?？。.!！:：]*");
     private static final int LOG_RESPONSE_LIMIT = 800;
     private static final String SYSTEM = """
-        你是故障诊断请求规划器，不负责诊断或回答。只允许 tasks 中的 DIAGNOSE、EXPLAIN_FAULT_CODE，可拆分复合请求。
-        只能输出 JSON 对象，字段为 tasks,deviceName,inverterName,recentMinutes,startTime,endTime,faultCodes,symptom,requestedAspects。
+        你是故障诊断请求规划器，不负责诊断或回答。只允许 DIAGNOSE、EXPLAIN_FAULT_CODE 两种任务，可拆分复合请求。
+        只能输出一个 JSON 对象，结构固定如下（示例值仅说明类型，非实际内容）：
+        {"tasks":["DIAGNOSE"],"deviceName":"设备名","inverterName":null,"recentMinutes":30,"startTime":null,"endTime":null,"faultCodes":null,"symptom":null,"requestedAspects":null}
+        tasks 必须是字符串数组，元素只能是 "DIAGNOSE" 或 "EXPLAIN_FAULT_CODE"；禁止把 tasks 写成对象数组，禁止在 JSON 外输出任何文字。
         不得输出 SQL、表名、字段名、工具、用户、租户、角色、知识库ID，不得判断根因或编造设备/逆变器；不确定字段写 null。
         """;
     private final ObjectMapper objectMapper;
@@ -72,7 +78,7 @@ public class FaultRequestPlanner {
             return parsed;
         }
         String repairInput = response == null ? "" : response;
-        String repaired = safelyReadResponse(chatModel, List.of(SystemMessage.from(SYSTEM + "以下输出不是合法 JSON。只修复 JSON 格式，不新增事实。"), UserMessage.from(repairInput)), requestId);
+        String repaired = safelyReadResponse(chatModel, List.of(SystemMessage.from(SYSTEM + "以下输出不是合法 JSON 或不符合上述固定结构。只把它修复为上述结构的合法 JSON，不新增事实，不做诊断。"), UserMessage.from(repairInput)), requestId);
         parsed = parse(repaired);
         if (parsed != null) {
             log.info("fault request plan repaired: requestId={}, tasks={}", requestId, parsed.tasks());
@@ -122,14 +128,59 @@ public class FaultRequestPlanner {
         if (response == null || response.isBlank()) return null;
         String json = unwrapSingleJsonFence(response.trim());
         try {
+            JsonNode root = objectMapper.readTree(json);
+            if (!(root instanceof ObjectNode object)) return null;
+            normalizeTaskEntries(object);
             // 明确忽略越权字段；这些字段既不进入计划，也不会影响后续服务端上下文。
             return objectMapper.readerFor(FaultRequestPlan.class)
-                .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).readValue(json);
-        } catch (JsonProcessingException e) {
+                .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .readValue(objectMapper.treeAsTokens(object));
+        } catch (IOException e) {
             log.debug("fault request JSON parse error: error={}, response={}",
-                e.getOriginalMessage(), responseSnippet(response));
+                e.getMessage(), responseSnippet(response));
             return null;
         }
+    }
+
+    /** 模型偶发把 tasks 写成对象数组（如 {"taskType":"DIAGNOSE",...}）、单个对象、单个字符串或大小写漂移；归一为规范枚举名字符串数组，避免结构漂移阻断解析。 */
+    private static void normalizeTaskEntries(ObjectNode root) {
+        JsonNode tasks = root.get("tasks");
+        if (tasks == null || tasks.isNull()) return;
+        List<String> normalized = new ArrayList<>();
+        if (tasks.isArray()) {
+            for (JsonNode item : tasks) normalized.addAll(taskNamesOf(item));
+        } else {
+            normalized.addAll(taskNamesOf(tasks));
+        }
+        ArrayNode replacement = root.putArray("tasks");
+        normalized.forEach(replacement::add);
+    }
+
+    /** 从单个 tasks 元素提取任务名：字符串直接取，对象取 taskType 等字段；其他类型忽略。 */
+    private static List<String> taskNamesOf(JsonNode item) {
+        if (item.isTextual() && !item.asText().isBlank()) return List.of(canonicalTaskName(item.asText()));
+        if (item.isObject()) {
+            String taskName = firstTextValue(item, "taskType", "task_type", "type", "task");
+            if (taskName != null) return List.of(canonicalTaskName(taskName));
+        }
+        return List.of();
+    }
+
+    /** 大小写不敏感归一到枚举名；无法识别的值保持原样，由枚举反序列化拒绝后进入修复路径。 */
+    private static String canonicalTaskName(String raw) {
+        String trimmed = raw.trim();
+        for (FaultTaskType type : FaultTaskType.values()) {
+            if (type.name().equalsIgnoreCase(trimmed)) return type.name();
+        }
+        return trimmed;
+    }
+
+    private static String firstTextValue(JsonNode node, String... fields) {
+        for (String field : fields) {
+            JsonNode value = node.get(field);
+            if (value != null && value.isTextual() && !value.asText().isBlank()) return value.asText();
+        }
+        return null;
     }
 
     private static String unwrapSingleJsonFence(String value) {

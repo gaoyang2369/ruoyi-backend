@@ -94,6 +94,34 @@ public class TelemetryQueryService {
     }
 
     /**
+     * 解析设备在遥测数据中唯一的逆变器名称，用于用户未指明逆变器时的确定性补全。
+     * <p>
+     * 仅查询受控表中该设备出现过的逆变器名：唯一时直接返回；无数据或存在多个
+     * 逆变器时抛出业务异常，由调用方决定如何向用户表达。校验顺序与诊断查询一致，
+     * 未授权设备不会触达遥测表。
+     */
+    public String resolveInverterName(String deviceName) {
+        String normalizedDeviceName = normalizeRequiredText(deviceName, "设备名称不能为空");
+        if (!properties.isEnabled()) {
+            throw new ServiceException("故障诊断功能未启用");
+        }
+        validateConfiguration();
+        validateAssetAllowed(normalizedDeviceName);
+        String tableName = resolveTable(normalizedDeviceName);
+        List<String> names = realDataMapper.selectDistinctInverterNames(tableName, normalizedDeviceName);
+        List<String> distinct = names == null ? List.of() : names.stream()
+            .filter(StringUtils::hasText).map(String::trim).distinct().toList();
+        if (distinct.isEmpty()) {
+            throw new ServiceException("未找到设备 " + normalizedDeviceName + " 的遥测数据，请确认设备名称是否正确");
+        }
+        if (distinct.size() > 1) {
+            throw new ServiceException("设备 " + normalizedDeviceName + " 下存在多个逆变器（"
+                + String.join("、", distinct) + "），请在问题中指明要诊断的逆变器");
+        }
+        return distinct.get(0);
+    }
+
+    /**
      * 按设备白名单路由遥测表：模拟数据阶段每台设备使用专属表，
      * 未配置专属表的设备回退到默认表。表名只可能来自配置，且在查询前强校验。
      */
@@ -125,6 +153,10 @@ public class TelemetryQueryService {
         if (Duration.between(startTime, endTime).compareTo(Duration.ofMinutes(properties.getMaxWindowMinutes())) > 0) {
             throw new ServiceException("诊断时间范围超过最大允许窗口");
         }
+        validateAssetAllowed(deviceName);
+    }
+
+    private void validateAssetAllowed(String deviceName) {
         if (properties.getAllowedAssets() == null || properties.getAllowedAssets().stream()
             .filter(Objects::nonNull).map(String::trim).noneMatch(deviceName::equals)) {
             throw new ServiceException("当前无设备诊断权限: " + deviceName);
