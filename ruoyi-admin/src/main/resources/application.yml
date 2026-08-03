@@ -30,12 +30,25 @@ fault:
     enabled: true
     default-window-minutes: 30
     max-window-minutes: 120
-    nominal-sampling-seconds: 1
+    # 模拟数据约 3~5 秒一条，真实数据接入后按实际采样周期调整
+    nominal-sampling-seconds: 4
     completeness-threshold: 0.8
     create-time-buffer-seconds: 10
     timezone: Asia/Shanghai
     allowed-assets:
-      - G120-1
+      - G120电机1
+      - G120电机2
+      - G120电机3
+    # 遥测表路由：模拟数据阶段每台设备一张专属表（位于 dcma 数据源）。
+    # 真实数据接入统一表后，清空 device-telemetry-tables 即回退到 telemetry-table。
+    telemetry-table: real_data
+    # Map 键含中文，按 Spring Boot 规范必须使用方括号包裹才能完成绑定
+    device-telemetry-tables:
+      "[G120电机1]": real_data_01
+      "[G120电机2]": real_data_02
+      "[G120电机3]": real_data_03
+    # 请求窗口无数据时回退到该设备最近可用数据窗口（模拟数据阶段保证始终有数据可查）
+    latest-data-fallback-enabled: true
 
 captcha:
   # 是否启用验证码校验

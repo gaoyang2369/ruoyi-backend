@@ -64,9 +64,25 @@ public class FaultDiagnosisEvidenceRecorder {
         summary.put("faultCodeCount", safeSize(telemetry.faultCodes()));
         summary.put("alarmCodeCount", safeSize(telemetry.alarmCodes()));
         summary.put("dataSufficient", telemetry.quality() != null && telemetry.quality().sufficient());
+        summary.put("fallbackToLatestData", telemetry.fallbackToLatestData());
+        if (telemetry.fallbackToLatestData()) {
+            summary.put("analysisStartTime", String.valueOf(telemetry.startTime()));
+            summary.put("analysisEndTime", String.valueOf(telemetry.endTime()));
+        }
         int sourceCount = telemetry.quality() == null ? 0 : telemetry.quality().validRecordCount();
         session.record(DiagnosisStepType.QUERY_TELEMETRY, EvidenceType.TELEMETRY, input, summary, sourceCount,
-            telemetry.sourceDigest(), BigDecimal.valueOf(telemetry.quality() == null ? 0D : telemetry.quality().completeness()));
+            rawSourceDigest(telemetry.sourceDigest()),
+            BigDecimal.valueOf(telemetry.quality() == null ? 0D : telemetry.quality().completeness()));
+    }
+
+    /**
+     * 证据链按裸 64 位 SHA-256 存储和校验；遥测结果摘要带有算法前缀，入库前剥离。
+     */
+    private static String rawSourceDigest(String digest) {
+        if (digest == null) {
+            return null;
+        }
+        return digest.startsWith("sha256:") ? digest.substring("sha256:".length()) : digest;
     }
 
     public EvidenceReference recordKnowledge(EvidenceSession session, String faultCode, List<Long> knowledgeBaseIds,

@@ -1,0 +1,97 @@
+# 故障诊断遥测数据接入说明
+
+> 状态：模拟数据阶段
+> 更新日期：2026-08-03
+> 适用范围：故障诊断确定性链路中的运行数据查询（`TelemetryQueryService`）
+
+## 1. 当前架构
+
+故障诊断读取遥测数据的链路是固定的、受控的：
+
+```
+FaultDiagnosisChatService（聊天入口，LLM 规划时间窗/未指定时用 now() 推算）
+  → FaultDiagnosisOrchestrator（确定性编排）
+    → TelemetryQueryService（权限/窗口校验、表路由、最新数据回退）
+      → RealDataMapper（固定 SQL，@DS("dcma")，表名服务端受控）
+        → dcma 数据源（10.108.12.164:3306/dcma）
+```
+
+- 遥测库与应用主库分离：主库存业务与证据表（`ruoyi-ai-agent`），遥测数据在 `dcma` 库。
+- 遥测表没有租户字段，Mapper 上已用 `@InterceptorIgnore` 显式忽略租户与数据权限拦截。
+- 查询只接受 设备 + 逆变器 + 时间窗，不接受 SQL；表名只来自配置且强校验（`^[A-Za-z0-9_]+$`）。
+
+## 2. 模拟数据阶段（当前）
+
+由于真实数据尚未到位，使用 `dcma` 库中三张模拟表，一台设备一张表：
+
+| 设备 | 表 | 数据范围 | 备注 |
+| --- | --- | --- | --- |
+| G120电机1 | real_data_01 | 2026-07-19 14:50:01 ~ 15:04:11（245 行） | 含 A07089 报警段 |
+| G120电机2 | real_data_02 | 2026-07-19 10:21:36 ~ 10:41:46（345 行） | 含 F30899 故障段 |
+| G120电机3 | real_data_03 | 2026-07-19 12:22:56 ~ 12:44:28（368 行） | 含 F07016 故障段 |
+
+对应配置（`application.yml` 的 `fault.diagnosis`）：
+
+```yaml
+fault:
+  diagnosis:
+    allowed-assets: [G120电机1, G120电机2, G120电机3]
+    telemetry-table: real_data          # 未命中专属表时的默认表
+    device-telemetry-tables:            # 设备 -> 专属表路由（键含中文必须加方括号）
+      "[G120电机1]": real_data_01
+      "[G120电机2]": real_data_02
+      "[G120电机3]": real_data_03
+    latest-data-fallback-enabled: true  # 请求窗口无数据时回退到最近可用数据
+    nominal-sampling-seconds: 4         # 模拟数据约 3~5 秒一条
+```
+
+### 最新数据回退
+
+模拟数据的时间是固定的（2026-07-19），而聊天提问默认按 `now()` 推算时间窗，必然查空。
+因此 `TelemetryQueryService` 在请求窗口查不到任何数据时，会自动改用该设备
+**最近可用**的数据窗口（以表内最新 `create_time` 为终点、向前推 `default-window-minutes`，
+并不早于表内最早记录）重新查询，保证始终有数据可查。
+
+回退发生时：
+
+- 结果标记 `fallbackToLatestData=true`；
+- 回答的"实际分析时间"显示真实分析的窗口；
+- "限制说明"中会注明：请求时间范围内没有遥测数据，已回退至最近可用数据；
+- 证据链（fd_evidence 的遥测证据摘要）也会记录回退标记与实际窗口。
+
+## 3. 真实数据到位后的切换步骤
+
+真实数据的表结构只要与现有 `real_data` 一致（列名相同，允许多列），按以下步骤切换：
+
+1. **确认数据落库**：确认真实数据写入 `dcma` 库的目标表（例如统一的 `real_data`），
+   且 `device_name`、`inverter_name` 的取值与 `allowed-assets` 一致。
+2. **清空按设备表路由**：删除或清空 `fault.diagnosis.device-telemetry-tables`，
+   所有设备自动回退到 `telemetry-table`（默认 `real_data`）。
+   如果真实数据仍然按设备分表，保留该映射并更新表名即可，代码无需改动。
+3. **校准采样周期**：按真实采样间隔调整 `nominal-sampling-seconds`
+   （影响完整度与数据缺口判断，进而影响"数据是否充足"标记）。
+4. **决定是否保留回退**：真实数据是持续入库的实时数据时，
+   可以保留 `latest-data-fallback-enabled: true`（提问不带时间时仍能给出最近数据），
+   也可以改为 `false`，让无数据的窗口如实返回空结果。
+5. **时区核对**：确认真实数据的 `timestamp`/`date`+`time` 字段含义与
+   `fault.diagnosis.timezone`（当前 Asia/Shanghai）一致。
+
+以上全部是配置修改，不需要改代码和表结构。
+
+### 数据源位置
+
+- 本地开发：`application-dev.yml` 的 `spring.datasource.dynamic.datasource.dcma`
+- 生产/容器：`application-prod.yml` 同名配置，或 docker-compose 中 backend 的
+  `SPRING_DATASOURCE_DYNAMIC_DATASOURCE_DCMA_URL / _USERNAME / _PASSWORD` 环境变量
+- 遥测库地址、账号变更时只改这些地方，代码不动。
+
+## 4. 验证方法
+
+构建并重启后端后，向故障诊断 Agent（FAULT_DIAGNOSIS + DETERMINISTIC）提问：
+
+- `诊断一下G120电机2最近的情况` —— 不指定时间，验证回退到 2026-07-19 10:21~10:41 的数据并观测到 F30899；
+- `G120电机3在2026-07-19 12:30到12:40之间有什么故障？` —— 指定窗口命中 F07016；
+- `G120电机1最近30分钟有没有故障？` —— 命中 A07089 报警段。
+
+预期回答包含：实际分析时间、数据质量摘要、观测到的故障/报警码、证据编号；
+发生回退时还应包含回退的限制说明。

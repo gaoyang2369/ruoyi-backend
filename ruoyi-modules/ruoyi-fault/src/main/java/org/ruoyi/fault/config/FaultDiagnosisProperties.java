@@ -5,7 +5,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 故障诊断的受控查询配置。
@@ -40,5 +42,23 @@ public class FaultDiagnosisProperties {
      * 当前部署允许诊断的设备资产编码。
      */
     private List<String> allowedAssets = new ArrayList<>();
+
+    /**
+     * 遥测数据默认表名。真实数据接入后保持 real_data 即可。
+     */
+    private String telemetryTable = "real_data";
+
+    /**
+     * 模拟数据阶段的按设备表路由：设备名 -> 专属表名。
+     * 命中时优先使用专属表，未命中回退到 {@link #telemetryTable}。
+     * 真实数据接入统一表后清空该映射即可完成切换。
+     */
+    private Map<String, String> deviceTelemetryTables = new LinkedHashMap<>();
+
+    /**
+     * 请求窗口内查不到数据时，是否回退到该设备最近可用数据窗口。
+     * 模拟数据阶段开启以保证始终有数据可查；可按需在真实数据阶段关闭。
+     */
+    private boolean latestDataFallbackEnabled = true;
 
 }

@@ -1,6 +1,7 @@
 package org.ruoyi.fault.application;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("dev")
 class DiagnosisResultAssemblerTest {
 
     private final DiagnosisResultAssembler assembler = new DiagnosisResultAssembler();
@@ -58,6 +60,20 @@ class DiagnosisResultAssemblerTest {
         assertFalse(notFound.partial());
     }
 
+    @Test
+    void fallbackTelemetryUsesActualWindowAndAddsLimitation() {
+        LocalDateTime fallbackStart = LocalDateTime.of(2026, 1, 14, 18, 0);
+        TelemetryQueryResult fallback = new TelemetryQueryResult("device", fallbackStart, fallbackStart.plusMinutes(30),
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), null, null, null, true);
+
+        DiagnosisResult result = assembler.assemble(command(), fallback,
+            new KnowledgeLookupAggregation(List.of(), List.of(), List.of()), decision(List.of(), List.of()));
+
+        assertEquals(fallbackStart, result.startTime());
+        assertEquals(fallbackStart.plusMinutes(30), result.endTime());
+        assertTrue(result.limitations().stream().anyMatch(item -> item.contains("已回退至该设备最近可用数据")));
+    }
+
     private static DiagnosisCommand command() {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new DiagnosisCommand("device", "inverter", start, start.plusMinutes(5), null, List.of(1L),
@@ -67,7 +83,7 @@ class DiagnosisResultAssemblerTest {
     private static TelemetryQueryResult telemetry(List<String> faults, List<String> alarms) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
-            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), faults, alarms, null, null, null);
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), faults, alarms, null, null, null, false);
     }
 
     private static DiagnosisDecision decision(List<String> recommendations, List<String> limitations) {

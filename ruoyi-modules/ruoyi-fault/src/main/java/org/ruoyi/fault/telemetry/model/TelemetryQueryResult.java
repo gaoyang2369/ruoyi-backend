@@ -15,6 +15,7 @@ import java.util.List;
  * @param statusEvents 状态、故障码或报警码发生变化时的关键事件
  * @param statistics 关键数值指标统计
  * @param sourceDigest 覆盖查询条件与后端证据行的 SHA-256 摘要
+ * @param fallbackToLatestData 请求窗口无数据时是否回退到了最近可用数据窗口
  */
 public record TelemetryQueryResult(
     String assetCode,
@@ -25,6 +26,14 @@ public record TelemetryQueryResult(
     List<String> alarmCodes,
     List<StatusEvent> statusEvents,
     TelemetryStatistics statistics,
-    String sourceDigest
+    String sourceDigest,
+    boolean fallbackToLatestData
 ) {
+
+    /** 返回仅切换回退标记、其余字段不变的副本。 */
+    public TelemetryQueryResult withFallbackToLatestData(boolean fallback) {
+        return new TelemetryQueryResult(assetCode, startTime, endTime, quality, faultCodes, alarmCodes,
+            statusEvents, statistics, sourceDigest, fallback);
+    }
+
 }

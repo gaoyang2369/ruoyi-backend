@@ -10,6 +10,7 @@ import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.springframework.stereotype.Component;
 
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,6 +18,8 @@ import java.util.List;
 /** 将命令、遥测、知识查询和规则判断合成为稳定的不可变结果。 */
 @Component
 public class DiagnosisResultAssembler {
+
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss");
 
     public DiagnosisResult assemble(DiagnosisCommand command, TelemetryQueryResult telemetry,
                                     KnowledgeLookupAggregation knowledge, DiagnosisDecision decision) {
@@ -34,11 +37,17 @@ public class DiagnosisResultAssembler {
         List<String> limitations = new ArrayList<>(decision.limitations());
         limitations.addAll(knowledge.limitations());
         limitations.addAll(evidenceLimitations == null ? List.of() : evidenceLimitations);
+        if (telemetry.fallbackToLatestData()) {
+            limitations.add("请求时间范围内没有遥测数据，已回退至该设备最近可用数据（"
+                + TIME_FORMATTER.format(telemetry.startTime()) + " 至 "
+                + TIME_FORMATTER.format(telemetry.endTime()) + "）");
+        }
 
         boolean partial = evidencePartial || candidates.stream()
             .anyMatch(candidate -> candidate.knowledgeStatus() == KnowledgeLookupStatus.FAILED);
+        // 结果时间使用遥测实际分析窗口：未回退时与请求窗口一致，回退时为最近可用数据窗口。
         return new DiagnosisResult(command.context().requestId(), decision.status(), partial, command.deviceName(),
-            command.inverterName(), command.startTime(), command.endTime(), command.symptom(), telemetry.quality(),
+            command.inverterName(), telemetry.startTime(), telemetry.endTime(), command.symptom(), telemetry.quality(),
             telemetry.statistics(), telemetry.faultCodes(), telemetry.alarmCodes(), observations, candidates,
             recommendations, distinct(limitations), evidenceIndex);
     }

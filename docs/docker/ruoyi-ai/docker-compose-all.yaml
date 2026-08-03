@@ -113,6 +113,11 @@ services:
       SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_URL: jdbc:mysql://mysql:3306/ruoyi-ai-agent?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true
       SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_USERNAME: root
       SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD: root
+      # 故障诊断遥测数据库（real_data / real_data_01~03 所在库），只读查询
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_DCMA_DRIVERCLASSNAME: com.mysql.cj.jdbc.Driver
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_DCMA_URL: jdbc:mysql://10.108.12.164:3306/dcma?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_DCMA_USERNAME: root
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_DCMA_PASSWORD: "707707"
       # Redis 配置
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379

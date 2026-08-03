@@ -2,6 +2,7 @@ package org.ruoyi.fault.evidence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.fault.evidence.support.EvidenceCanonicalJsonWriter;
 
 import java.time.LocalDateTime;
@@ -11,6 +12,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
+@Tag("dev")
 class EvidenceCanonicalJsonWriterTest {
 
     private final EvidenceCanonicalJsonWriter writer = new EvidenceCanonicalJsonWriter(new ObjectMapper());

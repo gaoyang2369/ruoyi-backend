@@ -1,6 +1,7 @@
 package org.ruoyi.fault.application;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.result.DiagnosisDecision;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
@@ -12,6 +13,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("dev")
 class BasicFaultRuleEngineTest {
 
     private final BasicFaultRuleEngine engine = new BasicFaultRuleEngine();
@@ -52,6 +54,7 @@ class BasicFaultRuleEngineTest {
     private static TelemetryQueryResult telemetry(boolean sufficient, List<String> faultCodes, List<String> alarmCodes) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
-            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), null, null);
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), null, null,
+            false);
     }
 }

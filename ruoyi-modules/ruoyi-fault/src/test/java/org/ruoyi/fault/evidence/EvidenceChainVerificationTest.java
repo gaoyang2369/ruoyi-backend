@@ -2,6 +2,7 @@ package org.ruoyi.fault.evidence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.fault.evidence.entity.DiagnosisCaseEntity;
 import org.ruoyi.fault.evidence.entity.DiagnosisEvidenceEntity;
 import org.ruoyi.fault.evidence.service.EvidenceChainService;
@@ -17,6 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("dev")
 class EvidenceChainVerificationTest {
 
     private final EvidenceCanonicalJsonWriter writer = new EvidenceCanonicalJsonWriter(new ObjectMapper());

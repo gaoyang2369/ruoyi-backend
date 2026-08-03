@@ -2,6 +2,7 @@ package org.ruoyi.fault.evidence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.fault.evidence.support.EvidenceCanonicalJsonWriter;
 import org.ruoyi.fault.evidence.support.EvidenceHashCalculator;
 import org.ruoyi.fault.evidence.support.Sha256Hasher;
@@ -12,6 +13,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+@Tag("dev")
 class EvidenceHashCalculatorTest {
 
     private final EvidenceHashCalculator calculator = new EvidenceHashCalculator(

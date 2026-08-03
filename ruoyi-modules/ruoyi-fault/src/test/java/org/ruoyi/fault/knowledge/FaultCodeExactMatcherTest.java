@@ -1,11 +1,13 @@
 package org.ruoyi.fault.knowledge;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 精确故障码 token 匹配测试。 */
+@Tag("dev")
 class FaultCodeExactMatcherTest {
 
     @Test

@@ -15,18 +15,24 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.zone.ZoneRulesException;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * 受控运行数据查询服务。
  * <p>
- * 该类是故障诊断读取 {@code real_data} 的唯一业务入口，只接收设备、逆变器和时间窗，
- * 不接收 SQL，也不向调用方返回原始时序行。职责仅包括请求校验、固定 Mapper 查询和结果分析调度；
- * 时间解析、去重与摘要计算由 {@link TelemetryDataAnalyzer} 完成。
+ * 该类是故障诊断读取遥测数据的唯一业务入口，只接收设备、逆变器和时间窗，
+ * 不接收 SQL，也不向调用方返回原始时序行。职责仅包括请求校验、受控表路由、
+ * 固定 Mapper 查询、最新数据回退和结果分析调度；时间解析、去重与摘要计算由
+ * {@link TelemetryDataAnalyzer} 完成。
  */
 @Service
 @RequiredArgsConstructor
 public class TelemetryQueryService {
+
+    /** 受控表名只允许字母、数字和下划线，配置值在查询前强制校验，杜绝拼接注入。 */
+    private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]+$");
 
     private final RealDataMapper realDataMapper;
     private final TelemetryDataAnalyzer telemetryDataAnalyzer;
@@ -34,6 +40,9 @@ public class TelemetryQueryService {
 
     /**
      * 查询一个受授权资产在指定窗口内的遥测诊断摘要。
+     * <p>
+     * 请求窗口查不到任何数据且开启了最新数据回退时，自动改用该设备最近可用的
+     * 数据窗口重新查询，并在结果中标记 {@code fallbackToLatestData}。
      *
      * @param deviceName 设备名称，同时作为当前阶段的资产编码
      * @param inverterName 逆变器名称
@@ -47,16 +56,57 @@ public class TelemetryQueryService {
         String normalizedInverterName = normalizeRequiredText(inverterName, "逆变器名称不能为空");
         validateRequest(normalizedDeviceName, startTime, endTime);
 
-        // create_time 仅用于数据库粗筛。缓冲区用于容纳入库延迟，精确窗口仍由 observedAt 决定。
+        String tableName = resolveTable(normalizedDeviceName);
         int bufferSeconds = properties.getCreateTimeBufferSeconds();
-        LocalDateTime queryStart = startTime.minusSeconds(bufferSeconds);
-        LocalDateTime queryEnd = endTime.plusSeconds(bufferSeconds);
+        // create_time 仅用于数据库粗筛。缓冲区用于容纳入库延迟，精确窗口仍由 observedAt 决定。
         List<RealDataEntity> rawRecords = realDataMapper.selectTelemetry(
-            normalizedDeviceName, normalizedInverterName, queryStart, queryEnd
+            tableName, normalizedDeviceName, normalizedInverterName,
+            startTime.minusSeconds(bufferSeconds), endTime.plusSeconds(bufferSeconds)
         );
 
-        return telemetryDataAnalyzer.analyze(normalizedDeviceName, normalizedInverterName, startTime, endTime,
+        boolean fallbackUsed = false;
+        LocalDateTime effectiveStart = startTime;
+        LocalDateTime effectiveEnd = endTime;
+        if ((rawRecords == null || rawRecords.isEmpty()) && properties.isLatestDataFallbackEnabled()) {
+            LocalDateTime latest = realDataMapper.selectLatestCreateTime(
+                tableName, normalizedDeviceName, normalizedInverterName);
+            if (latest != null) {
+                LocalDateTime earliest = realDataMapper.selectEarliestCreateTime(
+                    tableName, normalizedDeviceName, normalizedInverterName);
+                // 回退窗口以最新一条记录为终点，向前取默认窗口长度，并不早于表内最早记录。
+                effectiveEnd = latest.plusSeconds(1);
+                effectiveStart = effectiveEnd.minusMinutes(properties.getDefaultWindowMinutes());
+                if (earliest != null && earliest.isAfter(effectiveStart)) {
+                    effectiveStart = earliest;
+                }
+                rawRecords = realDataMapper.selectTelemetry(
+                    tableName, normalizedDeviceName, normalizedInverterName,
+                    effectiveStart.minusSeconds(bufferSeconds), effectiveEnd.plusSeconds(bufferSeconds)
+                );
+                fallbackUsed = true;
+            }
+        }
+
+        TelemetryQueryResult result = telemetryDataAnalyzer.analyze(
+            normalizedDeviceName, normalizedInverterName, effectiveStart, effectiveEnd,
             rawRecords == null ? List.of() : rawRecords);
+        return fallbackUsed ? result.withFallbackToLatestData(true) : result;
+    }
+
+    /**
+     * 按设备白名单路由遥测表：模拟数据阶段每台设备使用专属表，
+     * 未配置专属表的设备回退到默认表。表名只可能来自配置，且在查询前强校验。
+     */
+    private String resolveTable(String deviceName) {
+        Map<String, String> deviceTables = properties.getDeviceTelemetryTables();
+        String tableName = deviceTables == null ? null : deviceTables.get(deviceName);
+        if (!StringUtils.hasText(tableName)) {
+            tableName = properties.getTelemetryTable();
+        }
+        if (!StringUtils.hasText(tableName) || !TABLE_NAME_PATTERN.matcher(tableName).matches()) {
+            throw new ServiceException("故障诊断遥测表配置无效: " + tableName);
+        }
+        return tableName;
     }
 
     /**
@@ -99,6 +149,19 @@ public class TelemetryQueryService {
             ZoneId.of(properties.getTimezone());
         } catch (ZoneRulesException e) {
             throw new ServiceException("故障诊断时区配置无效: " + properties.getTimezone());
+        }
+        if (!StringUtils.hasText(properties.getTelemetryTable())
+            || !TABLE_NAME_PATTERN.matcher(properties.getTelemetryTable()).matches()) {
+            throw new ServiceException("故障诊断遥测表配置无效: " + properties.getTelemetryTable());
+        }
+        Map<String, String> deviceTables = properties.getDeviceTelemetryTables();
+        if (deviceTables != null) {
+            for (Map.Entry<String, String> entry : deviceTables.entrySet()) {
+                String table = entry.getValue();
+                if (!StringUtils.hasText(table) || !TABLE_NAME_PATTERN.matcher(table).matches()) {
+                    throw new ServiceException("故障诊断遥测表配置无效: " + table);
+                }
+            }
         }
     }
 

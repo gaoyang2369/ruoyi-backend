@@ -66,7 +66,7 @@ public class TelemetryDataAnalyzer {
         String sourceDigest = sourceDigest(deviceName, inverterName, startTime, endTime, rawRecords, quality);
 
         return new TelemetryQueryResult(deviceName, startTime, endTime, quality, faultCodes, alarmCodes,
-            statusEvents, statistics, sourceDigest);
+            statusEvents, statistics, sourceDigest, false);
     }
 
     /**

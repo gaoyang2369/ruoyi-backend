@@ -1,6 +1,7 @@
 package org.ruoyi.fault.diagnosis;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -22,6 +23,8 @@ import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.fault.evidence.entity.DiagnosisCaseEntity;
 import org.ruoyi.fault.evidence.entity.DiagnosisStepEntity;
+import org.ruoyi.fault.evidence.enums.EvidenceType;
+import org.ruoyi.fault.evidence.model.EvidenceAppendCommand;
 import org.ruoyi.fault.evidence.model.EvidenceAppendResult;
 import org.ruoyi.fault.evidence.service.DiagnosisCaseService;
 import org.ruoyi.fault.evidence.service.DiagnosisStepService;
@@ -38,12 +41,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@Tag("dev")
 class FaultDiagnosisOrchestratorTest {
 
     @Mock
@@ -66,9 +72,10 @@ class FaultDiagnosisOrchestratorTest {
         diagnosisCase.setId(1L);
         DiagnosisStepEntity step = new DiagnosisStepEntity();
         step.setId(1L);
-        when(diagnosisCaseService.create(any())).thenReturn(diagnosisCase);
-        when(diagnosisStepService.start(any())).thenReturn(step);
-        when(evidenceChainService.append(any())).thenReturn(new EvidenceAppendResult(1L, "EV-001", 1,
+        // 共享桩并非每个测试都会消费（失败路径提前中断），使用 lenient 避免严格模式误报
+        lenient().when(diagnosisCaseService.create(any())).thenReturn(diagnosisCase);
+        lenient().when(diagnosisStepService.start(any())).thenReturn(step);
+        lenient().when(evidenceChainService.append(any())).thenReturn(new EvidenceAppendResult(1L, "EV-001", 1,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         evidenceRecorder = new FaultDiagnosisEvidenceRecorder(diagnosisCaseService, diagnosisStepService,
             evidenceChainService);
@@ -91,6 +98,24 @@ class FaultDiagnosisOrchestratorTest {
         verify(telemetryQueryService).queryTelemetry("device", "inverter", command(List.of(7L)).startTime(),
             command(List.of(7L)).endTime());
         assertEquals(DiagnosisStatus.FAULT_DETECTED, result.status());
+    }
+
+    @Test
+    void telemetryEvidenceDigestIsStoredWithoutAlgorithmPrefix() {
+        LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
+        TelemetryQueryResult prefixed = new TelemetryQueryResult("device", start, start.plusMinutes(5),
+            new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), null,
+            "sha256:" + "a".repeat(64), false);
+        when(telemetryQueryService.queryTelemetry(any(), any(), any(), any())).thenReturn(prefixed);
+
+        orchestrator.diagnose(command(List.of()));
+
+        ArgumentCaptor<EvidenceAppendCommand> captor = ArgumentCaptor.forClass(EvidenceAppendCommand.class);
+        verify(evidenceChainService, atLeastOnce()).append(captor.capture());
+        EvidenceAppendCommand telemetryEvidence = captor.getAllValues().stream()
+            .filter(item -> item.evidenceType() == EvidenceType.TELEMETRY)
+            .findFirst().orElseThrow();
+        assertEquals("a".repeat(64), telemetryEvidence.sourceDigest());
     }
 
     @Test
@@ -186,6 +211,6 @@ class FaultDiagnosisOrchestratorTest {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
             new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), null,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
     }
 }

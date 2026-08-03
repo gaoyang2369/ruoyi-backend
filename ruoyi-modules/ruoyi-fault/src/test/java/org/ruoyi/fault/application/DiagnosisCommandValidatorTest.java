@@ -1,6 +1,7 @@
 package org.ruoyi.fault.application;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+@Tag("dev")
 class DiagnosisCommandValidatorTest {
 
     private final DiagnosisCommandValidator validator = new DiagnosisCommandValidator();
