@@ -4,7 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
+import org.ruoyi.fault.telemetry.model.CodeOccurrence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
+import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
@@ -64,13 +66,14 @@ public class TelemetryDataAnalyzer {
         CodeExtraction codes = extractClassifiedCodes(validRecords);
         List<StatusEvent> statusEvents = buildStatusEvents(validRecords);
         TelemetryStatistics statistics = buildStatistics(validRecords);
+        OperationStatistics operation = buildOperationStatistics(validRecords);
         String sourceDigest = sourceDigest(deviceName, inverterName, startTime, endTime, rawRecords, quality);
         LocalDateTime latestObservedAt = validRecords.isEmpty()
             ? null : validRecords.get(validRecords.size() - 1).observedAt();
 
         return new TelemetryQueryResult(deviceName, startTime, endTime, quality, codes.faultCodes(),
             codes.alarmCodes(), codes.unknownCodes(), statusEvents, statistics, sourceDigest, false,
-            latestObservedAt, codes.notes());
+            latestObservedAt, codes.notes(), operation);
     }
 
     /**
@@ -319,6 +322,80 @@ public class TelemetryDataAnalyzer {
             return new NumericSummary(null, null, null);
         }
         return new NumericSummary(statistics.getMin(), statistics.getMax(), statistics.getAverage());
+    }
+
+    /**
+     * 计算运行报告级统计量：电机温度与电机负载率的峰值出现时间，以及故障/报警码的出现情况。
+     * <p>
+     * 代码归类口径与 {@link #buildStatusEvents} 保持一致；峰值时间跟随严格最大值，
+     * 窗口内没有对应有效值时返回 null。
+     */
+    private OperationStatistics buildOperationStatistics(List<TimedRecord> records) {
+        LocalDateTime maxMotorTempAt = peakObservedAt(records, RealDataEntity::getMotorTemp);
+        LocalDateTime maxMotorLoadRateAt = peakObservedAt(records, RealDataEntity::getMotorLoadRate);
+        Map<String, OccurrenceAccumulator> faults = new LinkedHashMap<>();
+        Map<String, OccurrenceAccumulator> alarms = new LinkedHashMap<>();
+        for (TimedRecord record : records) {
+            String[] classified = classifyRecordCodes(record.data());
+            if (classified[0] != null) {
+                accumulateOccurrence(faults, classified[0], record.observedAt());
+            }
+            if (classified[1] != null) {
+                accumulateOccurrence(alarms, classified[1], record.observedAt());
+            }
+        }
+        return new OperationStatistics(maxMotorTempAt, maxMotorLoadRateAt,
+            toOccurrences(faults), toOccurrences(alarms));
+    }
+
+    /**
+     * 返回某个可空 Float 指标严格最大值对应的业务时间；无有效值时为 null。
+     */
+    private LocalDateTime peakObservedAt(List<TimedRecord> records, Function<RealDataEntity, Float> extractor) {
+        LocalDateTime peakAt = null;
+        Float peakValue = null;
+        for (TimedRecord record : records) {
+            Float value = extractor.apply(record.data());
+            if (value == null) {
+                continue;
+            }
+            if (peakValue == null || value > peakValue) {
+                peakValue = value;
+                peakAt = record.observedAt();
+            }
+        }
+        return peakAt;
+    }
+
+    private void accumulateOccurrence(Map<String, OccurrenceAccumulator> target, String code,
+                                      LocalDateTime observedAt) {
+        target.computeIfAbsent(code, key -> new OccurrenceAccumulator(observedAt)).accept(observedAt);
+    }
+
+    private List<CodeOccurrence> toOccurrences(Map<String, OccurrenceAccumulator> accumulators) {
+        List<CodeOccurrence> occurrences = new ArrayList<>();
+        for (Map.Entry<String, OccurrenceAccumulator> entry : accumulators.entrySet()) {
+            OccurrenceAccumulator accumulator = entry.getValue();
+            occurrences.add(new CodeOccurrence(entry.getKey(), accumulator.count,
+                accumulator.firstObservedAt, accumulator.lastObservedAt));
+        }
+        return List.copyOf(occurrences);
+    }
+
+    /** 按业务时间顺序累计单个代码的出现次数与首末时间。 */
+    private static final class OccurrenceAccumulator {
+        private int count;
+        private final LocalDateTime firstObservedAt;
+        private LocalDateTime lastObservedAt;
+
+        private OccurrenceAccumulator(LocalDateTime firstObservedAt) {
+            this.firstObservedAt = firstObservedAt;
+        }
+
+        private void accept(LocalDateTime observedAt) {
+            count++;
+            lastObservedAt = observedAt;
+        }
     }
 
     /**

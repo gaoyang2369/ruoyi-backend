@@ -22,6 +22,9 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
+import org.ruoyi.fault.report.MarkdownOperationReportRenderer;
+import org.ruoyi.fault.report.OperationReportOrchestrator;
+import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
@@ -58,6 +61,7 @@ public class FaultDiagnosisChatService {
     private final FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     private final IChatMessageService chatMessageService;
     private final TelemetryQueryService telemetryQueryService;
+    private final OperationReportOrchestrator operationReportOrchestrator;
 
     /** 仅供结构化兼容测试或内部回退使用，不作为生产聊天入口。 */
     @Deprecated
@@ -74,6 +78,12 @@ public class FaultDiagnosisChatService {
             ? planFromModel(request, model, userId, requestId) : planFromInput(request);
         NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) return normalized.clarification();
+
+        // 运行报告全程确定性：同一份遥测快照完成诊断并渲染固定章节，不经过模型生成与安全校验。
+        if (normalized.plan().tasks().contains(FaultTaskType.GENERATE_REPORT)) {
+            OperationReportResult report = operationReportOrchestrator.generate(normalized.command());
+            return MarkdownOperationReportRenderer.render(report);
+        }
 
         DiagnosisResult diagnosis = null;
         if (normalized.plan().tasks().contains(FaultTaskType.DIAGNOSE)) diagnosis = faultDiagnosisOrchestrator.diagnose(normalized.command());
@@ -212,13 +222,21 @@ public class FaultDiagnosisChatService {
             if (!proposed.faultCodes().isEmpty()) tasks.add(FaultTaskType.EXPLAIN_FAULT_CODE);
         }
         if (tasks.isEmpty()) return NormalizedPlan.clarify("请说明需要诊断的设备、逆变器、时间范围，或明确要查询的故障码。");
+        // 报告已内含诊断：收敛为单一报告任务，避免重复执行诊断链路。
+        if (tasks.contains(FaultTaskType.GENERATE_REPORT)) {
+            tasks.clear();
+            tasks.add(FaultTaskType.GENERATE_REPORT);
+        }
         if (tasks.size() > 2) return NormalizedPlan.clarify("本次仅支持诊断设备遥测和查询故障码知识。");
-        List<String> codes;
-        try { codes = proposed.faultCodes().stream().map(FaultKnowledgeQuery::normalizeFaultCode).distinct().toList(); }
-        catch (IllegalArgumentException ex) { return NormalizedPlan.clarify("故障码格式无效，请提供例如 F30005 的故障码。"); }
+        List<String> codes = List.of();
+        if (tasks.contains(FaultTaskType.EXPLAIN_FAULT_CODE)) {
+            try { codes = proposed.faultCodes().stream().map(FaultKnowledgeQuery::normalizeFaultCode).distinct().toList(); }
+            catch (IllegalArgumentException ex) { return NormalizedPlan.clarify("故障码格式无效，请提供例如 F30005 的故障码。"); }
+        }
         if (tasks.contains(FaultTaskType.EXPLAIN_FAULT_CODE) && codes.isEmpty()) return NormalizedPlan.clarify("请提供需要说明的故障码。");
-        if (!tasks.contains(FaultTaskType.DIAGNOSE)) return NormalizedPlan.ready(new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), proposed.startTime(), proposed.endTime(), codes, proposed.symptom(), proposed.requestedAspects()), null);
-        if (StringUtils.isBlank(proposed.deviceName())) return NormalizedPlan.clarify("请补充需要诊断的设备名称。");
+        if (!tasks.contains(FaultTaskType.DIAGNOSE) && !tasks.contains(FaultTaskType.GENERATE_REPORT)) return NormalizedPlan.ready(new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), proposed.startTime(), proposed.endTime(), codes, proposed.symptom(), proposed.requestedAspects()), null);
+        if (StringUtils.isBlank(proposed.deviceName())) return NormalizedPlan.clarify(
+            tasks.contains(FaultTaskType.GENERATE_REPORT) ? "请补充需要生成报告的设备名称。" : "请补充需要诊断的设备名称。");
         TimeRange range = timeRange(proposed);
         if (range == null) return NormalizedPlan.clarify("请同时提供开始和结束时间，或提供有效的最近分钟数。");
         // 逆变器可选：用户未指明时由遥测数据确定性补全，而不是要求用户补充一个他们通常不知道的名称。

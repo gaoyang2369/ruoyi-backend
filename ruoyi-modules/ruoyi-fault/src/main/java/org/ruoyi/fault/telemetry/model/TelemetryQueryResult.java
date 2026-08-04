@@ -19,6 +19,7 @@ import java.util.List;
  * @param fallbackToLatestData 请求窗口无数据时是否回退到了最近可用数据窗口
  * @param latestObservedAt 最后一条有效遥测的业务时间；无有效记录时为 null
  * @param codeNormalizationNotes 代码归一化过程中发现的数据质量问题说明
+ * @param operation 运行报告级统计量；仅诊断用途的旧调用方可传 null
  */
 public record TelemetryQueryResult(
     String assetCode,
@@ -33,7 +34,8 @@ public record TelemetryQueryResult(
     String sourceDigest,
     boolean fallbackToLatestData,
     LocalDateTime latestObservedAt,
-    List<String> codeNormalizationNotes
+    List<String> codeNormalizationNotes,
+    OperationStatistics operation
 ) {
 
     public TelemetryQueryResult {
@@ -48,7 +50,7 @@ public record TelemetryQueryResult(
     public TelemetryQueryResult withFallbackToLatestData(boolean fallback) {
         return new TelemetryQueryResult(assetCode, startTime, endTime, quality, faultCodes, alarmCodes,
             unknownCodes, statusEvents, statistics, sourceDigest, fallback, latestObservedAt,
-            codeNormalizationNotes);
+            codeNormalizationNotes, operation);
     }
 
 }

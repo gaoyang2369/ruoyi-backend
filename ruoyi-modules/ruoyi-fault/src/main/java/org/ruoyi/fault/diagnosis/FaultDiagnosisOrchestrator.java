@@ -63,6 +63,21 @@ public class FaultDiagnosisOrchestrator {
             evidenceRecorder.fail(evidence, e);
             throw e;
         }
+        return diagnoseWithTelemetry(normalized, telemetry, evidence);
+    }
+
+    /**
+     * 使用调用方已持有的遥测快照执行诊断，保证报告与诊断共用同一份数据和来源摘要。
+     * 调用方拥有数据，因此不存在遥测查询失败分支。
+     */
+    public DiagnosisResult diagnose(DiagnosisCommand command, TelemetryQueryResult telemetry) {
+        DiagnosisCommand normalized = validator.validateAndNormalize(command);
+        FaultDiagnosisEvidenceRecorder.EvidenceSession evidence = evidenceRecorder.start(normalized);
+        return diagnoseWithTelemetry(normalized, telemetry, evidence);
+    }
+
+    private DiagnosisResult diagnoseWithTelemetry(DiagnosisCommand normalized, TelemetryQueryResult telemetry,
+                                                  FaultDiagnosisEvidenceRecorder.EvidenceSession evidence) {
         evidenceRecorder.recordTelemetry(evidence, normalized, telemetry);
 
         KnowledgeLookupAggregation knowledge = lookupKnowledge(telemetry.faultCodes(), telemetry.alarmCodes(),

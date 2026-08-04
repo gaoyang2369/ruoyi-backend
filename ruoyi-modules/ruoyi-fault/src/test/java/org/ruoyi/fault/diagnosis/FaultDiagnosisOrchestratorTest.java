@@ -118,7 +118,7 @@ class FaultDiagnosisOrchestratorTest {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         TelemetryQueryResult prefixed = new TelemetryQueryResult("device", start, start.plusMinutes(5),
             new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), List.of(), null,
-            "sha256:" + "a".repeat(64), false, start.plusMinutes(4), List.of());
+            "sha256:" + "a".repeat(64), false, start.plusMinutes(4), List.of(), null);
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any())).thenReturn(prefixed);
 
         orchestrator.diagnose(command(List.of()));
@@ -255,6 +255,30 @@ class FaultDiagnosisOrchestratorTest {
         assertEquals("F001", result.candidateFaults().get(0).faultCode());
     }
 
+    @Test
+    void overloadReusesProvidedTelemetryAndStillRecordsTelemetryEvidence() {
+        TelemetryQueryResult provided = telemetry(true, List.of(), List.of());
+
+        orchestrator.diagnose(command(List.of(7L)), provided);
+
+        verify(telemetryQueryService, never()).queryTelemetry(any(), any(), any(), any());
+        ArgumentCaptor<EvidenceAppendCommand> captor = ArgumentCaptor.forClass(EvidenceAppendCommand.class);
+        verify(evidenceChainService, atLeastOnce()).append(captor.capture());
+        assertTrue(captor.getAllValues().stream().anyMatch(item -> item.evidenceType() == EvidenceType.TELEMETRY));
+    }
+
+    @Test
+    void overloadStillRunsKnowledgeLookupAndRulesOnProvidedTelemetry() {
+        TelemetryQueryResult provided = telemetry(true, List.of("F001"), List.of());
+        when(faultKnowledgePort.query(any())).thenAnswer(invocation ->
+            FaultKnowledgeResult.notFound(invocation.getArgument(0, FaultKnowledgeQuery.class)));
+
+        DiagnosisResult result = orchestrator.diagnose(command(List.of(7L)), provided);
+
+        verify(faultKnowledgePort).query(any());
+        assertEquals(DiagnosisStatus.FAULT_DETECTED, result.status());
+    }
+
     private static DiagnosisCommand command(List<Long> knowledgeBaseIds) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new DiagnosisCommand("device", "inverter", start, start.plusMinutes(5), "symptom", knowledgeBaseIds,
@@ -266,6 +290,6 @@ class FaultDiagnosisOrchestratorTest {
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
             new DataQualitySummary(1, 1, 0, 0, 0, 1D, sufficient), faultCodes, alarmCodes, List.of(), List.of(),
             null, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false,
-            start.plusMinutes(4), List.of());
+            start.plusMinutes(4), List.of(), null);
     }
 }

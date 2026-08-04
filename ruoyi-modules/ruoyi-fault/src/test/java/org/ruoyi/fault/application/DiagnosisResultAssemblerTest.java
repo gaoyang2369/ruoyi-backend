@@ -66,7 +66,7 @@ class DiagnosisResultAssemblerTest {
         LocalDateTime fallbackStart = LocalDateTime.of(2026, 1, 14, 18, 0);
         TelemetryQueryResult fallback = new TelemetryQueryResult("device", fallbackStart, fallbackStart.plusMinutes(30),
             new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), null, null, null,
-            true, fallbackStart.plusMinutes(29), List.of());
+            true, fallbackStart.plusMinutes(29), List.of(), null);
 
         DiagnosisResult result = assembler.assemble(command(), fallback,
             new KnowledgeLookupAggregation(List.of(), List.of(), List.of()), decision(List.of(), List.of()));
@@ -118,7 +118,7 @@ class DiagnosisResultAssemblerTest {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),
             new DataQualitySummary(1, 1, 0, 0, 0, 1D, true), faults, alarms, List.of(), null, null, null, false,
-            latestObservedAt, notes);
+            latestObservedAt, notes, null);
     }
 
     private static DiagnosisDecision decision(List<String> recommendations, List<String> limitations) {

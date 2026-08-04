@@ -48,10 +48,11 @@ public class FaultRequestPlanner {
         Pattern.compile("[\\s,，、;；/|和及与?？。.!！:：]*");
     private static final int LOG_RESPONSE_LIMIT = 800;
     private static final String SYSTEM = """
-        你是故障诊断请求规划器，不负责诊断或回答。只允许 DIAGNOSE、EXPLAIN_FAULT_CODE 两种任务，可拆分复合请求。
+        你是故障诊断请求规划器，不负责诊断或回答。只允许 DIAGNOSE、EXPLAIN_FAULT_CODE、GENERATE_REPORT 三种任务，可拆分复合请求。
+        用户要求生成、查看或下载设备运行报告时输出 GENERATE_REPORT，并按报告需要提取设备与时间范围。
         只能输出一个 JSON 对象，结构固定如下（示例值仅说明类型，非实际内容）：
         {"tasks":["DIAGNOSE"],"deviceName":"设备名","inverterName":null,"recentMinutes":30,"startTime":null,"endTime":null,"faultCodes":null,"symptom":null,"requestedAspects":null}
-        tasks 必须是字符串数组，元素只能是 "DIAGNOSE" 或 "EXPLAIN_FAULT_CODE"；禁止把 tasks 写成对象数组，禁止在 JSON 外输出任何文字。
+        tasks 必须是字符串数组，元素只能是 "DIAGNOSE"、"EXPLAIN_FAULT_CODE" 或 "GENERATE_REPORT"；禁止把 tasks 写成对象数组，禁止在 JSON 外输出任何文字。
         不得输出 SQL、表名、字段名、工具、用户、租户、角色、知识库ID，不得判断根因或编造设备/逆变器；不确定字段写 null。
         """;
     private final ObjectMapper objectMapper;

@@ -154,6 +154,38 @@ class TelemetryDataAnalyzerTest {
     /**
      * 构造一条仅包含本测试所需字段的 real_data 记录。
      */
+    @Test
+    void operationStatisticsTrackCodeOccurrencesAndPeakTimes() {
+        LocalDateTime start = LocalDateTime.of(2026, 7, 24, 9, 0);
+        LocalDateTime end = start.plusSeconds(3);
+        RealDataEntity first = telemetryWithAlarm(1L, "2026-07-24 09:00:00", start,
+            "FAULT", "F30005", "0");
+        first.setMotorTemp(50F);
+        first.setMotorLoadRate(80F);
+        RealDataEntity second = telemetryWithAlarm(2L, "2026-07-24 09:00:01", start.plusSeconds(1),
+            "FAULT", "F30005", "A07089");
+        second.setMotorTemp(76F);
+        second.setMotorLoadRate(104.3F);
+        RealDataEntity third = telemetryWithAlarm(3L, "2026-07-24 09:00:02", start.plusSeconds(2),
+            "FAULT", "0", "A07089");
+        third.setMotorTemp(60F);
+        third.setMotorLoadRate(90F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", start, end,
+            List.of(first, second, third));
+
+        assertEquals(1, result.operation().faultCodeOccurrences().size());
+        assertEquals("F30005", result.operation().faultCodeOccurrences().get(0).code());
+        assertEquals(2, result.operation().faultCodeOccurrences().get(0).sampleCount());
+        assertEquals(start, result.operation().faultCodeOccurrences().get(0).firstObservedAt());
+        assertEquals(start.plusSeconds(1), result.operation().faultCodeOccurrences().get(0).lastObservedAt());
+        assertEquals(1, result.operation().alarmCodeOccurrences().size());
+        assertEquals("A07089", result.operation().alarmCodeOccurrences().get(0).code());
+        assertEquals(2, result.operation().alarmCodeOccurrences().get(0).sampleCount());
+        assertEquals(start.plusSeconds(1), result.operation().maxMotorTempAt());
+        assertEquals(start.plusSeconds(1), result.operation().maxMotorLoadRateAt());
+    }
+
     private RealDataEntity telemetry(Long id, String timestamp, String date, String time,
                                      LocalDateTime createTime, String status, String faultCode, Float actualPower) {
         RealDataEntity entity = new RealDataEntity();

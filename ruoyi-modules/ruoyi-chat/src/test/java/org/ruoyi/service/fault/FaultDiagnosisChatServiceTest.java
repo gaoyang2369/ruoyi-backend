@@ -68,6 +68,7 @@ class FaultDiagnosisChatServiceTest {
     @Mock private FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     @Mock private IChatMessageService chatMessageService;
     @Mock private org.ruoyi.fault.telemetry.service.TelemetryQueryService telemetryQueryService;
+    @Mock private org.ruoyi.fault.report.OperationReportOrchestrator operationReportOrchestrator;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -331,6 +332,49 @@ class FaultDiagnosisChatServiceTest {
 
         assertEquals("设备 设备A 下存在多个逆变器（逆变器1、逆变器2），请在问题中指明要诊断的逆变器", answer);
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
+    }
+
+    @Test
+    void generateReportTaskRendersDeterministicMarkdownAndSkipsAnswerGeneration() {
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.GENERATE_REPORT), "设备A", null, null,
+            null, null, List.of(), null, List.of());
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
+        when(operationReportOrchestrator.generate(any())).thenReturn(reportResult());
+        ChatRequest request = new ChatRequest();
+        request.setContent("生成设备A今天的运行报告");
+        request.setSessionId(9L);
+
+        String answer = chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
+
+        assertTrue(answer.startsWith("# 设备运行与状态报告"));
+        assertTrue(answer.contains("RP-1"));
+        verify(operationReportOrchestrator).generate(any());
+        verify(faultDiagnosisOrchestrator, never()).diagnose(any());
+        verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
+    }
+
+    private static org.ruoyi.fault.report.OperationReportResult reportResult() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
+        LocalDateTime end = start.plusDays(1);
+        org.ruoyi.fault.telemetry.model.TelemetryQueryResult telemetry =
+            new org.ruoyi.fault.telemetry.model.TelemetryQueryResult("设备A", start, end,
+                new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), List.of(),
+                new org.ruoyi.fault.telemetry.model.TelemetryStatistics(10, null, null, null, null, null, null,
+                    null, null, null, null, null),
+                "sha256-digest", false, end.minusMinutes(1), List.of(),
+                org.ruoyi.fault.telemetry.model.OperationStatistics.empty());
+        DiagnosisResult diagnosis = new DiagnosisResult("request", DiagnosisStatus.NO_EXPLICIT_FAULT, false,
+            "设备A", "逆变器A", start, end, start, end, false, end.minusMinutes(1), null,
+            new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
+            new org.ruoyi.fault.telemetry.model.TelemetryStatistics(10, null, null, null, null, null, null,
+                null, null, null, null, null),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        return new org.ruoyi.fault.report.OperationReportResult("RP-1", "设备A", "逆变器A", start, end,
+            end.plusSeconds(30), org.ruoyi.fault.report.ReportHealthStatus.NORMAL, "本周期设备状态：正常。",
+            telemetry, diagnosis);
     }
 
     private static ChatRequest requestWithTimes() {
