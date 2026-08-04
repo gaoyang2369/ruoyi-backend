@@ -61,4 +61,11 @@ public class FaultDiagnosisProperties {
      */
     private boolean latestDataFallbackEnabled = true;
 
+    /**
+     * 运行指标的显示单位：指标键 -> 单位文本（如 actual-power -> kW）。
+     * 报告只展示已配置单位的指标；未配置或映射为空时全部隐藏，
+     * 避免在数据字典未确认前输出无单位的数值。
+     */
+    private Map<String, String> metricUnits = new LinkedHashMap<>();
+
 }

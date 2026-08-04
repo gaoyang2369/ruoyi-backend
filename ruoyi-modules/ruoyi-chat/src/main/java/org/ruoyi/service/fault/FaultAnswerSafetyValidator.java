@@ -1,5 +1,6 @@
 package org.ruoyi.service.fault;
 
+import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
 import org.springframework.stereotype.Component;
 
@@ -10,8 +11,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 只保护故障码/报警码范围和少量高风险表述；不尝试做通用自然语言事实核验。
- * F 类故障码与 A 类报警码都必须来自本次观测或用户查询，不允许模型编造。
+ * 只保护故障码/报警码范围、技术参数范围和少量高风险表述；不尝试做通用自然语言事实核验。
+ * F 类故障码与 A 类报警码都必须来自本次观测或用户查询，p/r 技术参数必须来自本次知识证据，
+ * 不允许模型编造。
  */
 @Component
 public class FaultAnswerSafetyValidator {
@@ -35,6 +37,7 @@ public class FaultAnswerSafetyValidator {
         allowed.addAll(execution.queriedOnlyCodes());
         if (!allCodesAllowed(F_CODE.matcher(answer.toUpperCase(Locale.ROOT)), allowed)) return false;
         if (!allCodesAllowed(A_CODE.matcher(answer.toUpperCase(Locale.ROOT)), allowed)) return false;
+        if (!TechnicalTokens.valid(answer, allowedTechnicalTokens(execution))) return false;
         for (String section : answer.split("[。；\\n]")) {
             String upper = section.toUpperCase(Locale.ROOT);
             for (String code : execution.queriedOnlyCodes()) {
@@ -47,6 +50,17 @@ public class FaultAnswerSafetyValidator {
     private static boolean allCodesAllowed(Matcher codes, Set<String> allowed) {
         while (codes.find()) if (!allowed.contains(codes.group())) return false;
         return true;
+    }
+
+    /** p/r 参数白名单：本次知识证据片段中出现过的参数；无知识证据时为空集。 */
+    private static Set<String> allowedTechnicalTokens(FaultExecutionResult execution) {
+        Set<String> allowed = new LinkedHashSet<>();
+        for (FaultKnowledgeEvidence source : execution.knowledgeSources()) {
+            if (source != null) {
+                allowed.addAll(TechnicalTokens.tokensIn(source.content()));
+            }
+        }
+        return allowed;
     }
 
     private static boolean containsObservedClaim(String section) {

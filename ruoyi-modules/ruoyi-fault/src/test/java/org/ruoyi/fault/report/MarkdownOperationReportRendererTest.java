@@ -19,139 +19,221 @@ import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** 精简版/完整版渲染行为测试；全文快照见 {@link OperationReportSnapshotTest}。 */
 @Tag("dev")
 class MarkdownOperationReportRendererTest {
 
     @Test
-    void rendersAllTenSectionsForFaultReport() {
-        String markdown = MarkdownOperationReportRenderer.render(faultResult());
+    void conciseShowsStatusCardsAndRecommendationsWithoutAuditDetails() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(faultResult(), null, Map.of());
 
-        for (int section = 1; section <= 10; section++) {
-            assertTrue(markdown.contains("## " + section + ". "), "缺少章节 " + section);
-        }
-        assertTrue(markdown.contains("RP-1"));
-        assertTrue(markdown.contains("G120电机1"));
-        assertTrue(markdown.contains("故障"));
-        assertTrue(markdown.contains("F30005"));
-        assertTrue(markdown.contains("已匹配"));
-        assertTrue(markdown.contains("EV-001"));
-        assertTrue(markdown.contains("sha256-digest"));
+        assertTrue(markdown.startsWith("# 设备运行与状态报告"));
+        assertTrue(markdown.contains("**设备：G120电机1 · 逆变器：INV-1 · 状态：故障**"));
+        assertTrue(markdown.contains("## 故障 F30005 · 持续中"));
+        assertTrue(markdown.contains("- 采样命中：3 条记录"));
+        assertTrue(markdown.contains("- 手册匹配：已匹配：G120故障手册"));
+        assertTrue(markdown.contains("## 处理建议"));
+        assertTrue(markdown.contains("1. 检查负载"));
+        // 审计信息不进入聊天精简版
+        assertFalse(markdown.contains("sha256-digest"));
+        assertFalse(markdown.contains("报告编号 |"));
+        assertFalse(markdown.contains("| 时间 | 状态 |"));
+        assertFalse(markdown.contains("TELEMETRY"));
     }
 
     @Test
-    void rendersCodesAndEvidenceAsBulletListsForNarrowBubbles() {
-        String markdown = MarkdownOperationReportRenderer.render(faultResult());
+    void conciseAlarmCardShowsRecoveredWhenCodeClearedBeforeWindowEnd() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(alarmRecoveredResult(), null, Map.of());
 
-        assertTrue(markdown.contains("- F30005（故障码）：出现 3 次，首次 2026-08-04 10:05:00，最近 2026-08-04 10:07:00；知识匹配：已匹配：G120故障手册"));
-        assertTrue(markdown.contains("- EV-001 TELEMETRY：遥测记录，窗口内 10 条有效数据"));
-        assertFalse(markdown.contains("| 代码 | 类型 |"));
-        assertFalse(markdown.contains("| 编号 | 类型 |"));
+        assertTrue(markdown.contains("## 报警 A07089 · 已恢复"));
+        assertTrue(markdown.contains("故障码：未发现 F 类故障码。"));
+        assertFalse(markdown.contains("出现 30 次"));
     }
 
     @Test
-    void rendersNarrativeInSectionEightWhenProvided() {
-        String markdown = MarkdownOperationReportRenderer.render(faultResult(),
-            "F30005 与电机过载相关[EV-002]，建议检查负载。");
+    void conciseAlarmCardShowsOngoingWhenCodeActiveAtWindowEnd() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(alarmOngoingResult(), null, Map.of());
 
-        assertTrue(markdown.contains("## 8. 代码说明与处理建议"));
+        assertTrue(markdown.contains("## 报警 A07089 · 持续中"));
+    }
+
+    @Test
+    void conciseNormalReportWithoutCodes() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(
+            result(ReportHealthStatus.NORMAL, DiagnosisStatus.NO_EXPLICIT_FAULT,
+                OperationStatistics.empty(), List.of(), List.of(), normalEvents(), List.of(),
+                List.of(), List.of(), false, List.of()), null, Map.of());
+
+        assertTrue(markdown.contains("## 故障与报警"));
+        assertTrue(markdown.contains("窗口内未发现故障码或报警码。"));
+    }
+
+    @Test
+    void conciseOmitsMetricsSectionWhenNoUnitConfigured() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(faultResult(), null, Map.of());
+
+        assertFalse(markdown.contains("## 运行摘要"));
+        assertFalse(markdown.contains("实际功率"));
+    }
+
+    @Test
+    void conciseRendersOnlyConfiguredMetricsWithUnits() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(
+            faultResult(), null, Map.of("motor-temp", "℃"));
+
+        assertTrue(markdown.contains("## 运行摘要"));
+        assertTrue(markdown.contains("电机温度（℃）：最低 42.1，平均 58.3，最高 76.2"));
+        assertFalse(markdown.contains("实际功率"));
+        assertFalse(markdown.contains("电机负载率"));
+    }
+
+    @Test
+    void conciseFallbackFirstLineStatesCurrentStatusUnconfirmed() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(
+            result(ReportHealthStatus.NORMAL, DiagnosisStatus.NO_EXPLICIT_FAULT,
+                OperationStatistics.empty(), List.of(), List.of(), normalEvents(), List.of(),
+                List.of(), List.of(), true, List.of()), null, Map.of());
+
+        assertTrue(markdown.startsWith("# 设备运行与状态报告\n\n当前状态无法确认：请求窗口无数据"));
+    }
+
+    @Test
+    void conciseDataInsufficientStatesCurrentStatusUnconfirmed() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(
+            result(ReportHealthStatus.UNKNOWN, DiagnosisStatus.DATA_INSUFFICIENT,
+                OperationStatistics.empty(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), false, List.of()), null, Map.of());
+
+        assertTrue(markdown.contains("当前状态无法确认：窗口内数据缺失或不足。"));
+    }
+
+    @Test
+    void conciseUsesNarrativeWhenProvided() {
+        String markdown = MarkdownOperationReportRenderer.renderConcise(faultResult(),
+            "F30005 与电机过载相关[EV-002]，建议检查负载。", Map.of());
+
+        assertTrue(markdown.contains("## 处理建议"));
         assertTrue(markdown.contains("F30005 与电机过载相关[EV-002]，建议检查负载。"));
         assertFalse(markdown.contains("暂无针对本周期的处理建议"));
     }
 
     @Test
-    void rendersNormalReportWithoutCodes() {
-        String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.NORMAL,
-            DiagnosisStatus.NO_EXPLICIT_FAULT, OperationStatistics.empty(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), false));
+    void fullKeepsAuditInfoMetadataTimelineAndEvidence() {
+        String markdown = MarkdownOperationReportRenderer.renderFull(faultResult(), null, Map.of());
 
-        assertTrue(markdown.contains("本周期未发现故障码或报警码。"));
-        assertTrue(markdown.contains("未发现显式故障码或报警码。"));
+        for (int section = 1; section <= 9; section++) {
+            assertTrue(markdown.contains("## " + section + ". "), "缺少章节 " + section);
+        }
+        assertTrue(markdown.contains("RP-1"));
+        assertTrue(markdown.contains("sha256-digest"));
+        assertTrue(markdown.contains("运行指标单位尚未确认，暂不展示。"));
+        // 状态翻译，不展示原始状态码
+        assertTrue(markdown.contains("| 2026-08-04 10:05:00 | 异常 | F30005 | — |"));
+        assertTrue(markdown.contains("| 2026-08-04 10:20:00 | 正常 | — | — |"));
+        assertFalse(markdown.contains("| FAULT |"));
+        // 证据类型中文化，且与 title 相同时不重复
+        assertTrue(markdown.contains("- EV-001 遥测记录：窗口内 10 条有效数据"));
+        assertFalse(markdown.contains("TELEMETRY"));
     }
 
     @Test
-    void rendersDataInsufficientDisclaimer() {
-        String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.UNKNOWN,
-            DiagnosisStatus.DATA_INSUFFICIENT, OperationStatistics.empty(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), false));
+    void fullTranslatesUnknownStatusKeepsRawValue() {
+        OperationReportResult result = result(ReportHealthStatus.NORMAL, DiagnosisStatus.NO_EXPLICIT_FAULT,
+            OperationStatistics.empty(), List.of(), List.of(),
+            List.of(new StatusEvent(BASE_TIME, "99", null, null)), List.of(),
+            List.of(), List.of(), false, List.of());
 
-        assertTrue(markdown.contains("数据不足，本周期无法给出确定性诊断结论。"));
+        String markdown = MarkdownOperationReportRenderer.renderFull(result, null, Map.of());
+
+        assertTrue(markdown.contains("未识别（原值 99）"));
     }
 
     @Test
-    void rendersFallbackCalloutInMetaSection() {
-        String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.NORMAL,
-            DiagnosisStatus.NO_EXPLICIT_FAULT, OperationStatistics.empty(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), true));
+    void fullShowsMetricsWithConfiguredUnitsAndPeakTimes() {
+        String markdown = MarkdownOperationReportRenderer.renderFull(
+            faultResult(), null, Map.of("motor-temp", "℃", "motor-load-rate", "%"));
 
-        assertTrue(markdown.contains("已回退到最近可用数据窗口"));
+        assertTrue(markdown.contains("电机温度（℃）：最低 42.1，平均 58.3，最高 76.2"));
+        assertTrue(markdown.contains("电机负载率（%）：最高 104.3"));
+        assertTrue(markdown.contains("峰值出现时间：电机温度最高值出现于 2026-08-04 10:15:00；"
+            + "电机负载率最高值出现于 2026-08-04 10:17:00。"));
     }
 
-    @Test
-    void rendersEmptyRecommendationsAndLimitationsPlaceholders() {
-        String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.NORMAL,
-            DiagnosisStatus.NO_EXPLICIT_FAULT, OperationStatistics.empty(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), false));
+    private static final LocalDateTime BASE_TIME = LocalDateTime.of(2026, 8, 4, 10, 0);
 
-        assertTrue(markdown.contains("暂无针对本周期的处理建议"));
-        assertTrue(markdown.contains("- 无"));
-    }
-
-    @Test
-    void omitsNoEvidenceWhenIndexEmpty() {
-        String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.NORMAL,
-            DiagnosisStatus.NO_EXPLICIT_FAULT, OperationStatistics.empty(), List.of(), List.of(),
-            List.of(), List.of(), List.of(), false));
-
-        assertTrue(markdown.contains("本次没有可引用的持久化证据。"));
-        assertFalse(markdown.contains("EV-001"));
-    }
-
+    /** 故障持续中：窗口末尾事件仍携带 F30005。 */
     private static OperationReportResult faultResult() {
-        LocalDateTime first = LocalDateTime.of(2026, 8, 4, 10, 5);
+        LocalDateTime first = BASE_TIME.plusMinutes(5);
         OperationStatistics operation = new OperationStatistics(first.plusMinutes(10), first.plusMinutes(12),
             List.of(new CodeOccurrence("F30005", 3, first, first.plusMinutes(2))), List.of());
-        List<CodeOccurrence> faults = operation.faultCodeOccurrences();
         CandidateFault candidate = new CandidateFault("F30005", FaultCodeType.FAULT,
             KnowledgeLookupStatus.MATCHED,
             List.of(new FaultKnowledgeEvidence(7L, "doc", "G120故障手册", "fragment", 0, "电机过载")),
             List.of("EV-003"));
         EvidenceReference evidence = new EvidenceReference(1L, "EV-001", EvidenceType.TELEMETRY,
             "遥测记录", "窗口内 10 条有效数据", true);
+        List<StatusEvent> events = List.of(
+            new StatusEvent(first, "42", "F30005", null),
+            new StatusEvent(BASE_TIME.plusMinutes(20), "0", null, null),
+            new StatusEvent(BASE_TIME.plusMinutes(25), "42", "F30005", null));
         return result(ReportHealthStatus.FAULT, DiagnosisStatus.FAULT_DETECTED, operation,
-            List.of("F30005"), List.of(new StatusEvent(first, "FAULT", "F30005", null)),
-            List.of(candidate), List.of("检查负载"), List.of("仅依据故障码"), false, List.of(evidence), faults);
+            List.of("F30005"), List.of(), events, List.of(candidate),
+            List.of("检查负载"), List.of("仅依据故障码"), false, List.of(evidence));
+    }
+
+    /** 仅报警且已恢复：窗口末尾事件已无代码。 */
+    private static OperationReportResult alarmRecoveredResult() {
+        return alarmResult(List.of(
+            new StatusEvent(BASE_TIME.plusMinutes(30), "42", null, "A07089"),
+            new StatusEvent(BASE_TIME.plusMinutes(32), "0", null, null)));
+    }
+
+    /** 仅报警且持续中：窗口末尾事件仍携带 A07089。 */
+    private static OperationReportResult alarmOngoingResult() {
+        return alarmResult(List.of(
+            new StatusEvent(BASE_TIME.plusMinutes(30), "0", null, null),
+            new StatusEvent(BASE_TIME.plusMinutes(32), "42", null, "A07089")));
+    }
+
+    private static OperationReportResult alarmResult(List<StatusEvent> events) {
+        LocalDateTime first = BASE_TIME.plusMinutes(30);
+        OperationStatistics operation = new OperationStatistics(null, null, List.of(),
+            List.of(new CodeOccurrence("A07089", 30, first, first.plusMinutes(2))));
+        CandidateFault candidate = new CandidateFault("A07089", FaultCodeType.ALARM,
+            KnowledgeLookupStatus.MATCHED,
+            List.of(new FaultKnowledgeEvidence(7L, "doc", "G120故障手册", "fragment", 0, "直流回路电压异常")),
+            List.of("EV-003"));
+        return result(ReportHealthStatus.ATTENTION, DiagnosisStatus.WARNING_DETECTED, operation,
+            List.of(), List.of("A07089"), events, List.of(candidate),
+            List.of("检查供电电压"), List.of(), false, List.of());
+    }
+
+    private static List<StatusEvent> normalEvents() {
+        return List.of(new StatusEvent(BASE_TIME, "0", null, null));
     }
 
     private static OperationReportResult result(ReportHealthStatus health, DiagnosisStatus status,
                                                 OperationStatistics operation, List<String> faultCodes,
-                                                List<StatusEvent> events, List<CandidateFault> candidates,
-                                                List<String> recommendations, List<String> limitations,
-                                                boolean fallback) {
-        return result(health, status, operation, faultCodes, events, candidates, recommendations,
-            limitations, fallback, List.of(), List.of());
-    }
-
-    private static OperationReportResult result(ReportHealthStatus health, DiagnosisStatus status,
-                                                OperationStatistics operation, List<String> faultCodes,
-                                                List<StatusEvent> events, List<CandidateFault> candidates,
-                                                List<String> recommendations, List<String> limitations,
-                                                boolean fallback, List<EvidenceReference> evidence,
-                                                List<CodeOccurrence> faultOccurrences) {
-        LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
-        LocalDateTime end = start.plusDays(1);
+                                                List<String> alarmCodes, List<StatusEvent> events,
+                                                List<CandidateFault> candidates, List<String> recommendations,
+                                                List<String> limitations, boolean fallback,
+                                                List<EvidenceReference> evidence) {
+        LocalDateTime start = BASE_TIME;
+        LocalDateTime end = start.plusHours(1);
         TelemetryQueryResult telemetry = new TelemetryQueryResult("G120电机1", start, end,
-            new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), faultCodes, List.of(), List.of(), events,
+            new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), faultCodes, alarmCodes, List.of(), events,
             new TelemetryStatistics(10, 12.1, 25.2, 18.7, 42.1, 76.2, 58.3, 38.2, 63.1, 49.6, 104.3, 104.3),
             "sha256-digest", fallback, end.minusMinutes(1), List.of(), operation);
         DiagnosisResult diagnosis = new DiagnosisResult("request", status, false, "G120电机1", "INV-1",
             start, end, start, end, fallback, end.minusMinutes(1), null,
             new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
             new TelemetryStatistics(10, 12.1, 25.2, 18.7, 42.1, 76.2, 58.3, 38.2, 63.1, 49.6, 104.3, 104.3),
-            faultCodes, List.of(), List.of(), List.of(), candidates, recommendations, limitations, evidence);
+            faultCodes, alarmCodes, List.of(), List.of(), candidates, recommendations, limitations, evidence);
         return new OperationReportResult("RP-1", "G120电机1", "INV-1", start, end,
             end.plusSeconds(30), health, "本周期设备状态：" + health.getDisplayName() + "。",
             telemetry, diagnosis);

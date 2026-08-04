@@ -13,6 +13,7 @@ import org.ruoyi.common.tenant.helper.TenantHelper;
 import org.ruoyi.common.web.core.BaseController;
 import org.ruoyi.domain.bo.fault.OperationReportGenerateBo;
 import org.ruoyi.domain.vo.fault.OperationReportVo;
+import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.report.MarkdownOperationReportRenderer;
 import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.service.fault.OperationReportService;
@@ -29,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 
 /**
  * 设备运行与状态报告接口：生成（查看）与下载。报告按需实时生成，不落库。
+ * 查看返回聊天精简版正文，下载返回含时间线、数据质量与证据链的完整版。
  */
 @Validated
 @RestController
@@ -40,13 +42,17 @@ public class OperationReportController extends BaseController {
         DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final OperationReportService operationReportService;
+    private final FaultDiagnosisProperties faultDiagnosisProperties;
 
     @SaCheckPermission("fault:report:query")
     @PostMapping("/generate")
     public R<OperationReportVo> generate(@Valid @RequestBody OperationReportGenerateBo bo) {
         OperationReportResult result = operationReportService.generate(
             bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        return R.ok(toVo(result, render(result, bo.getAgentId())));
+        String markdown = MarkdownOperationReportRenderer.renderConcise(
+            result, operationReportService.narrate(bo.getAgentId(), result),
+            faultDiagnosisProperties.getMetricUnits());
+        return R.ok(toVo(result, markdown));
     }
 
     @SaCheckPermission("fault:report:export")
@@ -55,17 +61,15 @@ public class OperationReportController extends BaseController {
     public void download(@Valid OperationReportGenerateBo bo, HttpServletResponse response) throws IOException {
         OperationReportResult result = operationReportService.generate(
             bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        String markdown = render(result, bo.getAgentId());
+        String markdown = MarkdownOperationReportRenderer.renderFull(
+            result, operationReportService.narrate(bo.getAgentId(), result),
+            faultDiagnosisProperties.getMetricUnits());
         String filename = "运行报告_" + result.deviceName() + "_"
             + FILENAME_TIME_FORMATTER.format(result.generatedAt()) + ".md";
         response.setContentType("text/markdown; charset=utf-8");
         FileUtils.setAttachmentResponseHeader(response, filename);
         response.getOutputStream().write(markdown.getBytes(StandardCharsets.UTF_8));
         response.getOutputStream().flush();
-    }
-
-    private String render(OperationReportResult result, Long agentId) {
-        return MarkdownOperationReportRenderer.render(result, operationReportService.narrate(agentId, result));
     }
 
     private static OperationReportVo toVo(OperationReportResult result, String markdown) {

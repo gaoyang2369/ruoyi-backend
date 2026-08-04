@@ -80,11 +80,13 @@ public class FaultDiagnosisChatService {
         NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) return normalized.clarification();
 
-        // 运行报告事实层全程确定性；模型只撰写“代码说明与处理建议”，失败时渲染器回退确定性内容。
+        // 运行报告事实层全程确定性；模型只撰写“处理建议”，失败时渲染器回退确定性内容。
+        // 聊天窗口使用精简版，完整版仅经下载接口输出。
         if (normalized.plan().tasks().contains(FaultTaskType.GENERATE_REPORT)) {
             OperationReportResult report = operationReportOrchestrator.generate(normalized.command());
             String narrative = operationReportNarrator.narrate(report, model, agent, request.getContent());
-            return MarkdownOperationReportRenderer.render(report, narrative);
+            return MarkdownOperationReportRenderer.renderConcise(
+                report, narrative, faultDiagnosisProperties.getMetricUnits());
         }
 
         DiagnosisResult diagnosis = null;

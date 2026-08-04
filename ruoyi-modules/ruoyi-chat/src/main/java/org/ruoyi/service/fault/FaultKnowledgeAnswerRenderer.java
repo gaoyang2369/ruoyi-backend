@@ -11,15 +11,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 校验并渲染结构化故障知识回答，不处理来源和知识库权限。
  */
 final class FaultKnowledgeAnswerRenderer {
-    private static final Pattern TECHNICAL_TOKEN =
-        Pattern.compile("(?i)(?<![A-Z0-9_])([pr]\\d+(?:\\.\\d+)?)(?![A-Z0-9_])");
 
     private FaultKnowledgeAnswerRenderer() {
     }
@@ -134,13 +130,7 @@ final class FaultKnowledgeAnswerRenderer {
     private static boolean validTechnicalTokens(FaultKnowledgeAnswerDraft.FaultAnswer answer,
                                                 FaultKnowledgeFacts source) {
         Set<String> allowed = SiemensFaultKnowledgeExtractor.technicalTokens(source);
-        Matcher matcher = TECHNICAL_TOKEN.matcher(answerText(answer));
-        while (matcher.find()) {
-            if (!allowed.contains(matcher.group(1).toLowerCase(Locale.ROOT))) {
-                return false;
-            }
-        }
-        return true;
+        return TechnicalTokens.valid(answerText(answer), allowed);
     }
 
     private static String answerText(FaultKnowledgeAnswerDraft.FaultAnswer answer) {

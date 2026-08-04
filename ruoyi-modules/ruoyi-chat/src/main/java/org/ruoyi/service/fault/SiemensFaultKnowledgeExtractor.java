@@ -28,8 +28,6 @@ final class SiemensFaultKnowledgeExtractor {
         Pattern.compile("(?m)^\\s*(\\d+)\\s*[：:]\\s*(.*)$");
     private static final Pattern VALUE_ACTION =
         Pattern.compile("(?im)^\\s*故障值\\s*=\\s*([^\\s时：:]+)\\s*时\\s*[：:]\\s*(.*)$");
-    private static final Pattern TECHNICAL_TOKEN =
-        Pattern.compile("(?i)(?<![A-Z0-9_])([pr]\\d+(?:\\.\\d+)?)(?![A-Z0-9_])");
     private static final Pattern PAGE_NUMBER = Pattern.compile("^\\d{3,5}$");
     private static final Pattern CHAPTER_LINE =
         Pattern.compile("^\\d+(?:\\.\\d+)*\\s+故障和报警(?:列表)?$");
@@ -50,12 +48,7 @@ final class SiemensFaultKnowledgeExtractor {
     }
 
     static Set<String> technicalTokens(FaultKnowledgeFacts facts) {
-        Set<String> result = new LinkedHashSet<>();
-        Matcher matcher = TECHNICAL_TOKEN.matcher(sourceText(facts));
-        while (matcher.find()) {
-            result.add(matcher.group(1).toLowerCase());
-        }
-        return Set.copyOf(result);
+        return Set.copyOf(TechnicalTokens.tokensIn(sourceText(facts)));
     }
 
     private static FaultKnowledgeFacts extract(String faultCode, List<FaultKnowledgeEvidence> evidence) {

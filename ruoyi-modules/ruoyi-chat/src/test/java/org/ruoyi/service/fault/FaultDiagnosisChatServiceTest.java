@@ -3,6 +3,7 @@ package org.ruoyi.service.fault;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import dev.langchain4j.model.chat.ChatModel;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +56,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+@Tag("dev")
 @ExtendWith(MockitoExtension.class)
 class FaultDiagnosisChatServiceTest {
 
@@ -352,10 +354,14 @@ class FaultDiagnosisChatServiceTest {
 
         String answer = chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
 
+        // 聊天窗口输出精简版：首屏结论与报警卡片，审计信息不出现
         assertTrue(answer.startsWith("# 设备运行与状态报告"));
-        assertTrue(answer.contains("RP-1"));
-        assertTrue(answer.contains("## 8. 代码说明与处理建议"));
+        assertTrue(answer.contains("## 报警 A07089 · 已恢复"));
+        assertTrue(answer.contains("采样命中：30 条记录"));
+        assertTrue(answer.contains("## 处理建议"));
         assertTrue(answer.contains("A07089 为报警码，建议检查供电电压[EV-001]。"));
+        assertTrue(answer.contains("RP-1"));
+        assertFalse(answer.contains("sha256-digest"));
         verify(operationReportOrchestrator).generate(any());
         verify(operationReportNarrator).narrate(any(), any(), any(), any());
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
@@ -365,21 +371,31 @@ class FaultDiagnosisChatServiceTest {
     private static org.ruoyi.fault.report.OperationReportResult reportResult() {
         LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
         LocalDateTime end = start.plusDays(1);
+        LocalDateTime alarmStart = start.plusHours(1);
+        org.ruoyi.fault.telemetry.model.OperationStatistics operation =
+            new org.ruoyi.fault.telemetry.model.OperationStatistics(null, null, List.of(),
+                List.of(new org.ruoyi.fault.telemetry.model.CodeOccurrence("A07089", 30,
+                    alarmStart, alarmStart.plusMinutes(2))));
         org.ruoyi.fault.telemetry.model.TelemetryQueryResult telemetry =
             new org.ruoyi.fault.telemetry.model.TelemetryQueryResult("设备A", start, end,
-                new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), List.of(), List.of(), List.of(), List.of(),
+                new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), List.of(), List.of("A07089"), List.of(),
+                List.of(new org.ruoyi.fault.telemetry.model.StatusEvent(alarmStart, "42", null, "A07089"),
+                    new org.ruoyi.fault.telemetry.model.StatusEvent(alarmStart.plusMinutes(3), "0", null, null)),
                 new org.ruoyi.fault.telemetry.model.TelemetryStatistics(10, null, null, null, null, null, null,
                     null, null, null, null, null),
-                "sha256-digest", false, end.minusMinutes(1), List.of(),
-                org.ruoyi.fault.telemetry.model.OperationStatistics.empty());
-        DiagnosisResult diagnosis = new DiagnosisResult("request", DiagnosisStatus.NO_EXPLICIT_FAULT, false,
+                "sha256-digest", false, end.minusMinutes(1), List.of(), operation);
+        DiagnosisResult diagnosis = new DiagnosisResult("request", DiagnosisStatus.WARNING_DETECTED, false,
             "设备A", "逆变器A", start, end, start, end, false, end.minusMinutes(1), null,
             new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
             new org.ruoyi.fault.telemetry.model.TelemetryStatistics(10, null, null, null, null, null, null,
                 null, null, null, null, null),
-            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+            List.of(), List.of("A07089"), List.of(), List.of(),
+            List.of(new CandidateFault("A07089", FaultCodeType.ALARM, KnowledgeLookupStatus.MATCHED,
+                List.of(new FaultKnowledgeEvidence(7L, "doc", "G120故障手册", "fragment", 0, "直流回路电压异常")),
+                List.of("EV-002"))),
+            List.of("检查供电电压"), List.of(), List.of());
         return new org.ruoyi.fault.report.OperationReportResult("RP-1", "设备A", "逆变器A", start, end,
-            end.plusSeconds(30), org.ruoyi.fault.report.ReportHealthStatus.NORMAL, "本周期设备状态：正常。",
+            end.plusSeconds(30), org.ruoyi.fault.report.ReportHealthStatus.ATTENTION, "报告周期内设备状态：关注。",
             telemetry, diagnosis);
     }
 

@@ -52,6 +52,14 @@ fault:
       "[G120电机4]": real_data_04
     # 请求窗口无数据时回退到该设备最近可用数据窗口（模拟数据阶段保证始终有数据可查）
     latest-data-fallback-enabled: true
+    # 运行指标单位：报告只展示已配置单位的指标。模拟数据阶段单位未确认，保持为空即全部隐藏；
+    # 真实数据字典确认后按需启用，例如：
+    # metric-units:
+    #   actual-power: kW
+    #   motor-temp: ℃
+    #   inverter-temp: ℃
+    #   motor-load-rate: "%"
+    #   inverter-load-rate: "%"
 
 captcha:
   # 是否启用验证码校验

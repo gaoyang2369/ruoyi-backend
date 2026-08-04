@@ -69,7 +69,8 @@ public class OperationReportOrchestrator {
         switch (healthStatus) {
             case FAULT -> appendCodeSentence(out, "检测到故障码", diagnosis.faultCodes());
             case ATTENTION -> appendCodeSentence(out, "存在报警码", diagnosis.alarmCodes());
-            case NORMAL -> out.append("未发现显式故障码或报警码。");
+            // 只陈述未发现显式代码，不扩大为“设备完全健康”
+            case NORMAL -> out.append("窗口内未发现显式故障码或报警码。");
             case UNKNOWN -> out.append("无数据或数据质量不足，无法确认设备状态。");
         }
         DataQualitySummary quality = telemetry.quality();
