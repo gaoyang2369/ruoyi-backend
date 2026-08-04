@@ -53,3 +53,6 @@ logs/
 
 .flattened-pom.xml
 /.claude/settings.local.json
+
+# Python
+__pycache__/

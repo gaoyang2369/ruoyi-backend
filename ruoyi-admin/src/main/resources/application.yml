@@ -39,6 +39,7 @@ fault:
       - G120电机1
       - G120电机2
       - G120电机3
+      - G120电机4
     # 遥测表路由：模拟数据阶段每台设备一张专属表（位于 dcma 数据源）。
     # 真实数据接入统一表后，清空 device-telemetry-tables 即回退到 telemetry-table。
     telemetry-table: real_data
@@ -47,6 +48,8 @@ fault:
       "[G120电机1]": real_data_01
       "[G120电机2]": real_data_02
       "[G120电机3]": real_data_03
+      # 正常设备：仅正常数据，用于验证"未发现显式故障"回答路径
+      "[G120电机4]": real_data_04
     # 请求窗口无数据时回退到该设备最近可用数据窗口（模拟数据阶段保证始终有数据可查）
     latest-data-fallback-enabled: true
 
