@@ -43,6 +43,26 @@ class MarkdownOperationReportRendererTest {
     }
 
     @Test
+    void rendersCodesAndEvidenceAsBulletListsForNarrowBubbles() {
+        String markdown = MarkdownOperationReportRenderer.render(faultResult());
+
+        assertTrue(markdown.contains("- F30005（故障码）：出现 3 次，首次 2026-08-04 10:05:00，最近 2026-08-04 10:07:00；知识匹配：已匹配：G120故障手册"));
+        assertTrue(markdown.contains("- EV-001 TELEMETRY：遥测记录，窗口内 10 条有效数据"));
+        assertFalse(markdown.contains("| 代码 | 类型 |"));
+        assertFalse(markdown.contains("| 编号 | 类型 |"));
+    }
+
+    @Test
+    void rendersNarrativeInSectionEightWhenProvided() {
+        String markdown = MarkdownOperationReportRenderer.render(faultResult(),
+            "F30005 与电机过载相关[EV-002]，建议检查负载。");
+
+        assertTrue(markdown.contains("## 8. 代码说明与处理建议"));
+        assertTrue(markdown.contains("F30005 与电机过载相关[EV-002]，建议检查负载。"));
+        assertFalse(markdown.contains("暂无针对本周期的处理建议"));
+    }
+
+    @Test
     void rendersNormalReportWithoutCodes() {
         String markdown = MarkdownOperationReportRenderer.render(result(ReportHealthStatus.NORMAL,
             DiagnosisStatus.NO_EXPLICIT_FAULT, OperationStatistics.empty(), List.of(), List.of(),

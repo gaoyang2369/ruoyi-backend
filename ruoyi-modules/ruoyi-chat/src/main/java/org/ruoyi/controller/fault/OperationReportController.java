@@ -46,7 +46,7 @@ public class OperationReportController extends BaseController {
     public R<OperationReportVo> generate(@Valid @RequestBody OperationReportGenerateBo bo) {
         OperationReportResult result = operationReportService.generate(
             bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        return R.ok(toVo(result));
+        return R.ok(toVo(result, render(result, bo.getAgentId())));
     }
 
     @SaCheckPermission("fault:report:export")
@@ -55,7 +55,7 @@ public class OperationReportController extends BaseController {
     public void download(@Valid OperationReportGenerateBo bo, HttpServletResponse response) throws IOException {
         OperationReportResult result = operationReportService.generate(
             bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        String markdown = MarkdownOperationReportRenderer.render(result);
+        String markdown = render(result, bo.getAgentId());
         String filename = "运行报告_" + result.deviceName() + "_"
             + FILENAME_TIME_FORMATTER.format(result.generatedAt()) + ".md";
         response.setContentType("text/markdown; charset=utf-8");
@@ -64,14 +64,18 @@ public class OperationReportController extends BaseController {
         response.getOutputStream().flush();
     }
 
-    private static OperationReportVo toVo(OperationReportResult result) {
+    private String render(OperationReportResult result, Long agentId) {
+        return MarkdownOperationReportRenderer.render(result, operationReportService.narrate(agentId, result));
+    }
+
+    private static OperationReportVo toVo(OperationReportResult result, String markdown) {
         OperationReportVo vo = new OperationReportVo();
         vo.setReportCode(result.reportCode());
         vo.setDeviceName(result.deviceName());
         vo.setInverterName(result.inverterName());
         vo.setHealthStatus(result.healthStatus().name());
         vo.setSummary(result.summary());
-        vo.setMarkdown(MarkdownOperationReportRenderer.render(result));
+        vo.setMarkdown(markdown);
         vo.setGeneratedAt(result.generatedAt());
         vo.setRequestedStartTime(result.requestedStartTime());
         vo.setRequestedEndTime(result.requestedEndTime());

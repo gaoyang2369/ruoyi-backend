@@ -146,7 +146,8 @@ public class FaultAnswerGenerator {
         return out.toString();
     }
 
-    private static void appendBoundedKnowledge(StringBuilder out, FaultExecutionResult execution) {
+    /** 同包复用：运行报告叙事器以相同截断口径追加受限知识片段。 */
+    static void appendBoundedKnowledge(StringBuilder out, FaultExecutionResult execution) {
         Map<String, List<FaultKnowledgeEvidence>> byCode = knowledgeByCode(execution);
         List<String> orderedCodes = new ArrayList<>(execution.observedFaultCodes());
         orderedCodes.addAll(execution.observedAlarmCodes());

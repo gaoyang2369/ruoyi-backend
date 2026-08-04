@@ -40,6 +40,15 @@ public final class MarkdownOperationReportRenderer {
     }
 
     public static String render(OperationReportResult result) {
+        return render(result, null);
+    }
+
+    /**
+     * 渲染完整报告。
+     *
+     * @param narrative 已通过安全校验的“代码说明与处理建议”文字；为 null 时使用确定性内容
+     */
+    public static String render(OperationReportResult result, String narrative) {
         StringBuilder out = new StringBuilder();
         out.append("# 设备运行与状态报告\n");
         appendMetaSection(out, result);
@@ -49,7 +58,7 @@ public final class MarkdownOperationReportRenderer {
         appendEventsSection(out, result.telemetry());
         appendCodesSection(out, result);
         appendDiagnosisSection(out, result);
-        appendRecommendationsSection(out, result.diagnosis());
+        appendNarrativeSection(out, result.diagnosis(), narrative);
         appendLimitationsSection(out, result.diagnosis());
         appendEvidenceSection(out, result);
         out.append("\n---\n\n本报告由故障诊断系统自动生成，当前诊断依据为设备故障码与故障知识库，")
@@ -168,7 +177,7 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
-    /** 6. 故障与报警信息。 */
+    /** 6. 故障与报警信息。窄气泡内宽表会截断，使用要点列表呈现。 */
     private static void appendCodesSection(StringBuilder out, OperationReportResult result) {
         out.append("\n## 6. 故障与报警信息\n\n");
         TelemetryQueryResult telemetry = result.telemetry();
@@ -179,10 +188,8 @@ public final class MarkdownOperationReportRenderer {
             out.append("本周期未发现故障码或报警码。\n");
         } else {
             Map<String, CandidateFault> candidates = candidateFaultsByCode(result.diagnosis());
-            out.append("| 代码 | 类型 | 出现次数 | 首次出现 | 最近出现 | 知识匹配 |\n");
-            out.append("| --- | --- | --- | --- | --- | --- |\n");
-            appendOccurrenceRows(out, faults, "故障", candidates);
-            appendOccurrenceRows(out, alarms, "报警", candidates);
+            appendOccurrenceItems(out, faults, "故障", candidates);
+            appendOccurrenceItems(out, alarms, "报警", candidates);
         }
         if (!telemetry.unknownCodes().isEmpty()) {
             out.append("\n未识别代码：").append(String.join("、", telemetry.unknownCodes()))
@@ -190,15 +197,14 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
-    private static void appendOccurrenceRows(StringBuilder out, List<CodeOccurrence> occurrences, String type,
-                                             Map<String, CandidateFault> candidates) {
+    private static void appendOccurrenceItems(StringBuilder out, List<CodeOccurrence> occurrences, String type,
+                                              Map<String, CandidateFault> candidates) {
         for (CodeOccurrence occurrence : occurrences) {
-            CandidateFault candidate = candidates.get(occurrence.code());
-            out.append("| ").append(occurrence.code()).append(" | ").append(type).append("码 | ")
-                .append(occurrence.sampleCount()).append(" | ")
-                .append(formatTime(occurrence.firstObservedAt())).append(" | ")
-                .append(formatTime(occurrence.lastObservedAt())).append(" | ")
-                .append(knowledgeStatusText(candidate)).append(" |\n");
+            out.append("- ").append(occurrence.code()).append("（").append(type).append("码）：出现 ")
+                .append(occurrence.sampleCount()).append(" 次，首次 ")
+                .append(formatTime(occurrence.firstObservedAt())).append("，最近 ")
+                .append(formatTime(occurrence.lastObservedAt())).append("；知识匹配：")
+                .append(knowledgeStatusText(candidates.get(occurrence.code()))).append('\n');
         }
     }
 
@@ -229,9 +235,22 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
-    /** 8. 处理建议。 */
-    private static void appendRecommendationsSection(StringBuilder out, DiagnosisResult diagnosis) {
-        out.append("\n## 8. 处理建议\n\n");
+    /** 8. 代码说明与处理建议：优先呈现通过安全校验的模型叙事，失败时回退确定性内容。 */
+    private static void appendNarrativeSection(StringBuilder out, DiagnosisResult diagnosis, String narrative) {
+        out.append("\n## 8. 代码说明与处理建议\n\n");
+        if (narrative != null && !narrative.isBlank()) {
+            out.append(narrative.trim()).append('\n');
+            return;
+        }
+        List<CandidateFault> candidates = diagnosis.candidateFaults();
+        if (!candidates.isEmpty()) {
+            for (CandidateFault candidate : candidates) {
+                out.append("- ").append(candidate.faultCode()).append(" 是")
+                    .append(candidate.codeType().term()).append("码，知识匹配：")
+                    .append(knowledgeStatusText(candidate)).append("。\n");
+            }
+            out.append("知识库内容仅为资料解释，不能替代对本设备实际参数的核对。\n");
+        }
         List<String> recommendations = diagnosis.recommendations();
         if (recommendations.isEmpty()) {
             out.append("暂无针对本周期的处理建议，请结合后续运行数据持续观察。\n");
@@ -266,12 +285,14 @@ public final class MarkdownOperationReportRenderer {
             out.append("本次没有可引用的持久化证据。\n");
             return;
         }
-        out.append("| 编号 | 类型 | 标题 | 摘要 |\n| --- | --- | --- | --- |\n");
         for (EvidenceReference reference : evidence) {
-            out.append("| ").append(blankToNone(reference.evidenceCode())).append(" | ")
-                .append(reference.evidenceType() == null ? "—" : reference.evidenceType().name()).append(" | ")
-                .append(blankToNone(reference.title())).append(" | ")
-                .append(blankToNone(reference.summary())).append(" |\n");
+            out.append("- ").append(blankToNone(reference.evidenceCode())).append(' ')
+                .append(reference.evidenceType() == null ? "—" : reference.evidenceType().name()).append("：")
+                .append(blankToNone(reference.title()));
+            if (reference.summary() != null && !reference.summary().isBlank()) {
+                out.append("，").append(reference.summary());
+            }
+            out.append('\n');
         }
         out.append("\n诊断过程已按证据链持久化，可凭上述编号在系统中核验。\n");
     }

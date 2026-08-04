@@ -62,6 +62,7 @@ public class FaultDiagnosisChatService {
     private final IChatMessageService chatMessageService;
     private final TelemetryQueryService telemetryQueryService;
     private final OperationReportOrchestrator operationReportOrchestrator;
+    private final OperationReportNarrator operationReportNarrator;
 
     /** 仅供结构化兼容测试或内部回退使用，不作为生产聊天入口。 */
     @Deprecated
@@ -79,10 +80,11 @@ public class FaultDiagnosisChatService {
         NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) return normalized.clarification();
 
-        // 运行报告全程确定性：同一份遥测快照完成诊断并渲染固定章节，不经过模型生成与安全校验。
+        // 运行报告事实层全程确定性；模型只撰写“代码说明与处理建议”，失败时渲染器回退确定性内容。
         if (normalized.plan().tasks().contains(FaultTaskType.GENERATE_REPORT)) {
             OperationReportResult report = operationReportOrchestrator.generate(normalized.command());
-            return MarkdownOperationReportRenderer.render(report);
+            String narrative = operationReportNarrator.narrate(report, model, agent, request.getContent());
+            return MarkdownOperationReportRenderer.render(report, narrative);
         }
 
         DiagnosisResult diagnosis = null;

@@ -40,13 +40,20 @@ class OperationReportServiceTest {
     private TelemetryQueryService telemetryQueryService;
     @Mock
     private OperationReportOrchestrator operationReportOrchestrator;
+    @Mock
+    private OperationReportNarrator operationReportNarrator;
+    @Mock
+    private org.ruoyi.common.chat.service.chat.IChatModelService chatModelService;
+    @Mock
+    private org.ruoyi.factory.ChatServiceFactory chatServiceFactory;
 
     private OperationReportService service;
 
     @BeforeEach
     void setUp() {
         service = new OperationReportService(agentService, telemetryQueryService,
-            operationReportOrchestrator, new FaultDiagnosisProperties());
+            operationReportOrchestrator, operationReportNarrator, chatModelService, chatServiceFactory,
+            new FaultDiagnosisProperties());
     }
 
     @Test
@@ -111,6 +118,15 @@ class OperationReportServiceTest {
 
         assertThrows(ServiceException.class, () -> service.generate(
             bo("设备A", "逆变器A", null, null), 3L, "tenant"));
+    }
+
+    @Test
+    void narrateFallsBackWhenAgentHasNoModel() {
+        when(agentService.queryById(7L)).thenReturn(enabledAgent());
+
+        assertNull(service.narrate(7L, null));
+
+        verify(chatServiceFactory, never()).getOriginalService(any());
     }
 
     @Test

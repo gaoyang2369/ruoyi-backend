@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -77,7 +78,7 @@ class OperationReportOrchestratorTest {
             List.of(new CodeOccurrence("F30005", 3, first, first.plusMinutes(2))), List.of());
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any())).thenReturn(telemetry);
         when(faultDiagnosisOrchestrator.diagnose(any(DiagnosisCommand.class), any(TelemetryQueryResult.class)))
-            .thenReturn(diagnosis(DiagnosisStatus.FAULT_DETECTED));
+            .thenReturn(diagnosis(DiagnosisStatus.FAULT_DETECTED, List.of("F30005")));
 
         OperationReportResult result = orchestrator.generate(command());
 
@@ -85,8 +86,9 @@ class OperationReportOrchestratorTest {
         assertEquals(ReportHealthStatus.FAULT, result.healthStatus());
         assertEquals(command().startTime(), result.requestedStartTime());
         assertEquals(command().endTime(), result.requestedEndTime());
+        // 摘要只点代码清单，出现明细由第 6 节呈现
         assertTrue(result.summary().contains("F30005"));
-        assertTrue(result.summary().contains("3 次"));
+        assertFalse(result.summary().contains("次"));
         assertTrue(result.generatedAt() != null);
     }
 
@@ -113,11 +115,15 @@ class OperationReportOrchestratorTest {
     }
 
     private static DiagnosisResult diagnosis(DiagnosisStatus status) {
+        return diagnosis(status, List.of());
+    }
+
+    private static DiagnosisResult diagnosis(DiagnosisStatus status, List<String> faultCodes) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new DiagnosisResult("request", status, false, "device", "inverter",
             start, start.plusMinutes(30), start, start.plusMinutes(30), false, start.plusMinutes(29),
             null, new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), statistics(),
-            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+            faultCodes, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 
     private static TelemetryStatistics statistics() {

@@ -69,6 +69,7 @@ class FaultDiagnosisChatServiceTest {
     @Mock private IChatMessageService chatMessageService;
     @Mock private org.ruoyi.fault.telemetry.service.TelemetryQueryService telemetryQueryService;
     @Mock private org.ruoyi.fault.report.OperationReportOrchestrator operationReportOrchestrator;
+    @Mock private OperationReportNarrator operationReportNarrator;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -343,6 +344,8 @@ class FaultDiagnosisChatServiceTest {
         when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
         when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
         when(operationReportOrchestrator.generate(any())).thenReturn(reportResult());
+        when(operationReportNarrator.narrate(any(), any(), any(), any()))
+            .thenReturn("A07089 为报警码，建议检查供电电压[EV-001]。");
         ChatRequest request = new ChatRequest();
         request.setContent("生成设备A今天的运行报告");
         request.setSessionId(9L);
@@ -351,7 +354,10 @@ class FaultDiagnosisChatServiceTest {
 
         assertTrue(answer.startsWith("# 设备运行与状态报告"));
         assertTrue(answer.contains("RP-1"));
+        assertTrue(answer.contains("## 8. 代码说明与处理建议"));
+        assertTrue(answer.contains("A07089 为报警码，建议检查供电电压[EV-001]。"));
         verify(operationReportOrchestrator).generate(any());
+        verify(operationReportNarrator).narrate(any(), any(), any(), any());
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
         verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
     }

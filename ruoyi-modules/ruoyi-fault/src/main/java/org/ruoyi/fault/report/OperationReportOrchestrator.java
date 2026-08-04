@@ -5,9 +5,7 @@ import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
-import org.ruoyi.fault.telemetry.model.CodeOccurrence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
-import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.springframework.stereotype.Service;
@@ -67,11 +65,10 @@ public class OperationReportOrchestrator {
                                 DiagnosisResult diagnosis) {
         StringBuilder out = new StringBuilder();
         out.append("报告周期内设备状态：").append(healthStatus.getDisplayName()).append("。");
+        // 摘要只点状态与代码清单；出现次数、首末时间等明细由报告第 6 节呈现，避免重复。
         switch (healthStatus) {
-            case FAULT -> appendCodeSentence(out, "检测到故障码", telemetry.operation() == null
-                ? null : telemetry.operation().faultCodeOccurrences());
-            case ATTENTION -> appendCodeSentence(out, "存在报警码", telemetry.operation() == null
-                ? null : telemetry.operation().alarmCodeOccurrences());
+            case FAULT -> appendCodeSentence(out, "检测到故障码", diagnosis.faultCodes());
+            case ATTENTION -> appendCodeSentence(out, "存在报警码", diagnosis.alarmCodes());
             case NORMAL -> out.append("未发现显式故障码或报警码。");
             case UNKNOWN -> out.append("无数据或数据质量不足，无法确认设备状态。");
         }
@@ -94,28 +91,12 @@ public class OperationReportOrchestrator {
         return out.toString();
     }
 
-    private void appendCodeSentence(StringBuilder out, String prefix, List<CodeOccurrence> occurrences) {
-        if (occurrences == null || occurrences.isEmpty()) {
-            out.append(prefix).append("（无出现明细）。");
+    private static void appendCodeSentence(StringBuilder out, String prefix, List<String> codes) {
+        if (codes == null || codes.isEmpty()) {
+            out.append(prefix).append("（无）。");
             return;
         }
-        out.append(prefix).append(" ");
-        for (int index = 0; index < occurrences.size(); index++) {
-            CodeOccurrence occurrence = occurrences.get(index);
-            if (index > 0) {
-                out.append("；");
-            }
-            out.append(occurrence.code()).append(" 出现 ").append(occurrence.sampleCount()).append(" 次");
-            if (occurrence.firstObservedAt() != null) {
-                out.append("（首次 ").append(formatTime(occurrence.firstObservedAt()));
-                if (occurrence.lastObservedAt() != null
-                    && !occurrence.lastObservedAt().equals(occurrence.firstObservedAt())) {
-                    out.append("，最近 ").append(formatTime(occurrence.lastObservedAt()));
-                }
-                out.append("）");
-            }
-        }
-        out.append("。");
+        out.append(prefix).append(" ").append(String.join("、", codes)).append("。");
     }
 
     private static String formatTime(LocalDateTime value) {
