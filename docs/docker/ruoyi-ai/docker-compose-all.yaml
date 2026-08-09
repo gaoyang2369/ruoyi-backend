@@ -125,6 +125,8 @@ services:
       # 日志配置
       LOGGING_LEVEL_ORG_RUOYI: info
       LOGGING_LEVEL_ORG_SPRINGFRAMEWORK: warn
+      # 内部故障工具认证；从宿主机环境或 --env-file 注入，禁止提交真实 Token。
+      FAULT_INTERNAL_TOOLS_TOKEN: ${FAULT_INTERNAL_TOOLS_TOKEN:-}
       SYS_UPLOAD_PATH: /ruoyi/upload
       # 知识库向量存储配置（必须配置在后端容器）
       VECTOR_STORE_TYPE: weaviate

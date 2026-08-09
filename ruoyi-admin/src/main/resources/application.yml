@@ -60,6 +60,9 @@ fault:
     #   inverter-temp: ℃
     #   motor-load-rate: "%"
     #   inverter-load-rate: "%"
+  internal-tools:
+    # Hermes 内部调用 Token，空值时接口不可用。
+    token: ${FAULT_INTERNAL_TOOLS_TOKEN:}
 
 captcha:
   # 是否启用验证码校验
@@ -167,6 +170,8 @@ security:
     - /warm-flow-ui/config
     - /workflow/run
     - /coding/**
+    # 该路径改由 FaultToolInternalAuthFilter 执行内部服务认证。
+    - /internal/fault-tools/**
 # 多租户配置
 tenant:
   # 是否开启

@@ -127,6 +127,8 @@ services:
       # 日志配置
       LOGGING_LEVEL_ORG_RUOYI: info
       LOGGING_LEVEL_ORG_SPRINGFRAMEWORK: warn
+      # 内部故障工具认证；从宿主机环境或 --env-file 注入，禁止提交真实 Token。
+      FAULT_INTERNAL_TOOLS_TOKEN: ${FAULT_INTERNAL_TOOLS_TOKEN:-}
       SYS_UPLOAD_PATH: /ruoyi/upload   # 新增：对应 sys.upload.path
     volumes:
       - logs-data:/ruoyi/server/logs

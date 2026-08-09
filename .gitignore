@@ -56,3 +56,6 @@ logs/
 
 # Python
 __pycache__/
+
+# Local deployment secrets
+/docs/docker/ruoyi-ai/.env
