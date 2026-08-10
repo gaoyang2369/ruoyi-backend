@@ -153,6 +153,32 @@ class FaultDiagnosisOrchestratorTest {
     }
 
     @Test
+    void associatesAlarmObservationWithTelemetryEvidence() {
+        when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
+            .thenReturn(telemetry(true, List.of(), List.of("A07089")));
+        when(faultKnowledgePort.query(any())).thenAnswer(invocation ->
+            FaultKnowledgeResult.matched(invocation.getArgument(0, FaultKnowledgeQuery.class),
+                List.of(new FaultKnowledgeEvidence(7L, "doc", "manual", "fragment", 0, "A07089 entry"))));
+        when(evidenceChainService.append(any())).thenReturn(
+            new EvidenceAppendResult(1L, "EV-001", 1, "a".repeat(64)),
+            new EvidenceAppendResult(2L, "EV-002", 2, "b".repeat(64)),
+            new EvidenceAppendResult(3L, "EV-003", 3, "c".repeat(64)),
+            new EvidenceAppendResult(4L, "EV-004", 4, "d".repeat(64)));
+
+        DiagnosisResult result = orchestrator.diagnose(command(List.of(7L)));
+
+        assertEquals(List.of("EV-001"), result.observations().stream()
+            .filter(observation -> observation.observationCode().equals("ALARM_CODE:A07089"))
+            .findFirst().orElseThrow().evidenceCodes());
+        assertEquals(List.of("EV-002"), result.observations().stream()
+            .filter(observation -> observation.observationCode().equals("KNOWLEDGE_MATCH:A07089"))
+            .findFirst().orElseThrow().evidenceCodes());
+        assertEquals(List.of("EV-003"), result.observations().stream()
+            .filter(observation -> observation.observationCode().startsWith("RULE_DECISION:"))
+            .findFirst().orElseThrow().evidenceCodes());
+    }
+
+    @Test
     void queriesFaultCodesBeforeAlarmCodesAndKeepsBothInResult() {
         when(telemetryQueryService.queryTelemetry(any(), any(), any(), any()))
             .thenReturn(telemetry(true, List.of("F30899"), List.of("A07089")));

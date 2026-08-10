@@ -151,6 +151,28 @@ class TelemetryDataAnalyzerTest {
         assertEquals(null, result.latestObservedAt());
     }
 
+    @Test
+    void distinguishesRecoveredAlarmFromCurrentStateAndRoundsStatistics() {
+        RealDataEntity alarm = telemetryWithAlarm(1L, "2026-07-24 09:00:00", START_TIME,
+            "0", "0", "A07089");
+        alarm.setMotorTemp(39.997001F);
+        RealDataEntity recovered = telemetryWithAlarm(2L, "2026-07-24 09:00:01", START_TIME.plusSeconds(1),
+            "0", "0", "0");
+        recovered.setMotorTemp(40.123999F);
+
+        TelemetryQueryResult result = analyzer.analyze("G120-1", "INV-1", START_TIME, END_TIME,
+            List.of(alarm, recovered));
+
+        assertEquals("NORMAL", result.currentState().status());
+        assertEquals("0", result.currentState().statusCode());
+        assertEquals(List.of(), result.currentState().activeAlarmCodes());
+        assertEquals(List.of("A07089"), result.windowFindings().alarmCodes());
+        assertEquals(false, result.operation().alarmCodeOccurrences().get(0).active());
+        assertEquals(START_TIME.plusSeconds(1), result.operation().alarmCodeOccurrences().get(0).recoveredAt());
+        assertEquals(39.997D, result.statistics().minMotorTemp());
+        assertEquals(40.124D, result.statistics().maxMotorTemp());
+    }
+
     /**
      * 构造一条仅包含本测试所需字段的 real_data 记录。
      */

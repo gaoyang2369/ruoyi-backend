@@ -65,7 +65,7 @@ public class FaultDiagnosisEvidenceRecorder {
         return session;
     }
 
-    public void recordTelemetry(EvidenceSession session, DiagnosisCommand command, TelemetryQueryResult telemetry) {
+    public EvidenceReference recordTelemetry(EvidenceSession session, DiagnosisCommand command, TelemetryQueryResult telemetry) {
         Map<String, Object> input = baseInput(command);
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("assetCode", telemetry.assetCode());
@@ -84,7 +84,7 @@ public class FaultDiagnosisEvidenceRecorder {
             summary.put("codeNormalizationNotes", telemetry.codeNormalizationNotes());
         }
         int sourceCount = telemetry.quality() == null ? 0 : telemetry.quality().validRecordCount();
-        session.record(DiagnosisStepType.QUERY_TELEMETRY, EvidenceType.TELEMETRY, input, summary, sourceCount,
+        return session.record(DiagnosisStepType.QUERY_TELEMETRY, EvidenceType.TELEMETRY, input, summary, sourceCount,
             rawSourceDigest(telemetry.sourceDigest()),
             BigDecimal.valueOf(telemetry.quality() == null ? 0D : telemetry.quality().completeness()),
             "遥测记录", telemetryDisplaySummary(command, telemetry), true);
@@ -152,11 +152,11 @@ public class FaultDiagnosisEvidenceRecorder {
         return "《" + document + "》" + code + " 条目，代码类型为" + term;
     }
 
-    public void recordRules(EvidenceSession session, DiagnosisDecision decision, boolean fallbackToLatestData) {
+    public EvidenceReference recordRules(EvidenceSession session, DiagnosisDecision decision, boolean fallbackToLatestData) {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("status", decision.status().name());
         summary.put("observationCount", decision.observations().size());
-        session.record(DiagnosisStepType.APPLY_DIAGNOSIS_RULES, EvidenceType.RULE_RESULT, Map.of(), summary, 0, null,
+        return session.record(DiagnosisStepType.APPLY_DIAGNOSIS_RULES, EvidenceType.RULE_RESULT, Map.of(), summary, 0, null,
             null, "判断规则", rulesDisplaySummary(fallbackToLatestData), true);
     }
 

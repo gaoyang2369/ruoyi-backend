@@ -2,7 +2,9 @@ package org.ruoyi.fault.domain.result;
 
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
+import org.ruoyi.fault.telemetry.model.CurrentState;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
+import org.ruoyi.fault.telemetry.model.WindowFindings;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,10 +36,13 @@ public record DiagnosisResult(
     List<String> faultCodes,
     List<String> alarmCodes,
     List<String> unknownCodes,
+    CurrentState currentState,
+    WindowFindings windowFindings,
     List<DiagnosisObservation> observations,
     List<CandidateFault> candidateFaults,
     List<String> recommendations,
     List<String> limitations,
+    List<String> decisionRationale,
     List<EvidenceReference> evidenceIndex
 ) {
     public DiagnosisResult {
@@ -48,14 +53,29 @@ public record DiagnosisResult(
         candidateFaults = candidateFaults == null ? List.of() : List.copyOf(candidateFaults);
         recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
+        decisionRationale = decisionRationale == null ? List.of() : List.copyOf(decisionRationale);
         evidenceIndex = evidenceIndex == null ? List.of() : List.copyOf(evidenceIndex);
+    }
+
+    /** 兼容既有调用方构造的诊断结果，新增状态视图和决策依据为空。 */
+    public DiagnosisResult(String requestId, DiagnosisStatus status, boolean partial, String deviceName, String inverterName,
+                           LocalDateTime requestedStartTime, LocalDateTime requestedEndTime, LocalDateTime startTime,
+                           LocalDateTime endTime, boolean fallbackToLatestData, LocalDateTime latestObservedAt,
+                           String symptom, DataQualitySummary dataQuality, TelemetryStatistics statistics,
+                           List<String> faultCodes, List<String> alarmCodes, List<String> unknownCodes,
+                           List<DiagnosisObservation> observations, List<CandidateFault> candidateFaults,
+                           List<String> recommendations, List<String> limitations,
+                           List<EvidenceReference> evidenceIndex) {
+        this(requestId, status, partial, deviceName, inverterName, requestedStartTime, requestedEndTime, startTime,
+            endTime, fallbackToLatestData, latestObservedAt, symptom, dataQuality, statistics, faultCodes, alarmCodes,
+            unknownCodes, null, null, observations, candidateFaults, recommendations, limitations, List.of(), evidenceIndex);
     }
 
     public DiagnosisResult withEvidenceIndex(List<EvidenceReference> references, boolean partialResult,
                                              List<String> resultLimitations) {
         return new DiagnosisResult(requestId, status, partial || partialResult, deviceName, inverterName,
             requestedStartTime, requestedEndTime, startTime, endTime, fallbackToLatestData, latestObservedAt,
-            symptom, dataQuality, statistics, faultCodes, alarmCodes, unknownCodes, observations, candidateFaults,
-            recommendations, resultLimitations, references);
+            symptom, dataQuality, statistics, faultCodes, alarmCodes, unknownCodes, currentState, windowFindings,
+            observations, candidateFaults, recommendations, resultLimitations, decisionRationale, references);
     }
 }

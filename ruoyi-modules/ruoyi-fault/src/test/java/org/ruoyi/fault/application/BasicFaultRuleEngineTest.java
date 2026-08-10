@@ -51,6 +51,14 @@ class BasicFaultRuleEngineTest {
         assertEquals(first.limitations(), second.limitations());
     }
 
+    @Test
+    void putsAlarmNonEscalationInDecisionRationaleInsteadOfLimitations() {
+        DiagnosisDecision decision = engine.evaluate(telemetry(true, List.of(), List.of("A07089")), List.of());
+
+        assertTrue(decision.decisionRationale().stream().anyMatch(value -> value.contains("报警不升级为故障结论")));
+        assertTrue(decision.limitations().stream().noneMatch(value -> value.contains("报警码未升级为故障结论")));
+    }
+
     private static TelemetryQueryResult telemetry(boolean sufficient, List<String> faultCodes, List<String> alarmCodes) {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         return new TelemetryQueryResult("device", start, start.plusMinutes(5),

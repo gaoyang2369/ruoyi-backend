@@ -6,6 +6,7 @@ public enum ObservationType {
     FAULT_CODE,
     ALARM_CODE,
     STATUS_EVENT,
+    RULE_DECISION,
     KNOWLEDGE_MATCH,
     KNOWLEDGE_MISSING,
     KNOWLEDGE_FAILURE

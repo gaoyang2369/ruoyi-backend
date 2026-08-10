@@ -321,7 +321,7 @@ public class TelemetryDataAnalyzer {
         if (statistics.getCount() == 0) {
             return new NumericSummary(null, null, null);
         }
-        return new NumericSummary(statistics.getMin(), statistics.getMax(), statistics.getAverage());
+        return new NumericSummary(round(statistics.getMin()), round(statistics.getMax()), round(statistics.getAverage()));
     }
 
     /**
@@ -345,7 +345,7 @@ public class TelemetryDataAnalyzer {
             }
         }
         return new OperationStatistics(maxMotorTempAt, maxMotorLoadRateAt,
-            toOccurrences(faults), toOccurrences(alarms));
+            toOccurrences(faults, records, true), toOccurrences(alarms, records, false));
     }
 
     /**
@@ -372,14 +372,35 @@ public class TelemetryDataAnalyzer {
         target.computeIfAbsent(code, key -> new OccurrenceAccumulator(observedAt)).accept(observedAt);
     }
 
-    private List<CodeOccurrence> toOccurrences(Map<String, OccurrenceAccumulator> accumulators) {
+    private List<CodeOccurrence> toOccurrences(Map<String, OccurrenceAccumulator> accumulators,
+                                                List<TimedRecord> records, boolean fault) {
         List<CodeOccurrence> occurrences = new ArrayList<>();
         for (Map.Entry<String, OccurrenceAccumulator> entry : accumulators.entrySet()) {
             OccurrenceAccumulator accumulator = entry.getValue();
+            CodeState state = codeStateAtWindowEnd(entry.getKey(), accumulator.lastObservedAt, records, fault);
             occurrences.add(new CodeOccurrence(entry.getKey(), accumulator.count,
-                accumulator.firstObservedAt, accumulator.lastObservedAt));
+                accumulator.firstObservedAt, accumulator.lastObservedAt, state.active(), state.recoveredAt()));
         }
         return List.copyOf(occurrences);
+    }
+
+    /** 在已解析的窗口内确认代码是否持续至末尾，并给出最后一次消失的确认时间。 */
+    private CodeState codeStateAtWindowEnd(String code, LocalDateTime lastObservedAt,
+                                            List<TimedRecord> records, boolean fault) {
+        LocalDateTime recoveredAt = null;
+        String latestCode = records.isEmpty() ? null : classifyRecordCodes(records.get(records.size() - 1).data())[fault ? 0 : 1];
+        for (TimedRecord record : records) {
+            String observedCode = classifyRecordCodes(record.data())[fault ? 0 : 1];
+            if (record.observedAt().isAfter(lastObservedAt) && !code.equals(observedCode) && recoveredAt == null) {
+                recoveredAt = record.observedAt();
+            }
+        }
+        boolean active = code.equals(latestCode);
+        return new CodeState(active, active ? null : recoveredAt);
+    }
+
+    private Double round(double value) {
+        return java.math.BigDecimal.valueOf(value).setScale(3, java.math.RoundingMode.HALF_UP).doubleValue();
     }
 
     /** 按业务时间顺序累计单个代码的出现次数与首末时间。 */
@@ -470,6 +491,10 @@ public class TelemetryDataAnalyzer {
 
     /** 单个数值指标的统计摘要。 */
     private record NumericSummary(Double min, Double max, Double average) {
+    }
+
+    /** 单个代码在窗口末尾的活动性与恢复确认时间。 */
+    private record CodeState(boolean active, LocalDateTime recoveredAt) {
     }
 
     /** 按 G120 规则归类后的代码提取结果。 */

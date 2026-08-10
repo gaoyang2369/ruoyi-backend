@@ -1,5 +1,7 @@
 package org.ruoyi.fault.telemetry.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -51,6 +53,39 @@ public record TelemetryQueryResult(
         return new TelemetryQueryResult(assetCode, startTime, endTime, quality, faultCodes, alarmCodes,
             unknownCodes, statusEvents, statistics, sourceDigest, fallback, latestObservedAt,
             codeNormalizationNotes, operation);
+    }
+
+    /**
+     * 窗口末尾的有效状态视图。状态事件代表同一窗口内状态的最近有效值，代码活动性则优先使用
+     * occurrence 对最后一条有效遥测的判断；旧调用方未提供 occurrence 时回退到最后一个状态事件。
+     */
+    @JsonProperty("currentState")
+    public CurrentState currentState() {
+        StatusEvent latestEvent = statusEvents.isEmpty() ? null : statusEvents.get(statusEvents.size() - 1);
+        String statusCode = latestEvent == null ? null : latestEvent.status();
+        List<String> activeFaults = activeCodes(true, latestEvent);
+        List<String> activeAlarms = activeCodes(false, latestEvent);
+        return new CurrentState("0".equals(statusCode) ? "NORMAL" : statusCode, statusCode,
+            latestObservedAt == null && latestEvent != null ? latestEvent.observedAt() : latestObservedAt,
+            activeFaults, activeAlarms);
+    }
+
+    @JsonProperty("windowFindings")
+    public WindowFindings windowFindings() {
+        return new WindowFindings(faultCodes, alarmCodes);
+    }
+
+    private List<String> activeCodes(boolean fault, StatusEvent latestEvent) {
+        List<CodeOccurrence> occurrences = operation == null
+            ? List.of() : (fault ? operation.faultCodeOccurrences() : operation.alarmCodeOccurrences());
+        if (!occurrences.isEmpty()) {
+            return occurrences.stream().filter(CodeOccurrence::active).map(CodeOccurrence::code).toList();
+        }
+        if (latestEvent == null) {
+            return List.of();
+        }
+        String code = fault ? latestEvent.faultCode() : latestEvent.alarmCode();
+        return code == null ? List.of() : List.of(code);
     }
 
 }
