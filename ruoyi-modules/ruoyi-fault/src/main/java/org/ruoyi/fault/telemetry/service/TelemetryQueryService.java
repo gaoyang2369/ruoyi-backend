@@ -7,6 +7,7 @@ import org.ruoyi.fault.telemetry.analysis.TelemetryDataAnalyzer;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.mapper.RealDataMapper;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,11 @@ public class TelemetryQueryService {
 
     /** 受控表名只允许字母、数字和下划线，配置值在查询前强制校验，杜绝拼接注入。 */
     private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]+$");
+    /** 与 telemetry/series 工具接口的既有默认分桶口径一致。 */
+    private static final int REPORT_SERIES_BUCKET_MINUTES = 1;
+    private static final List<String> REPORT_METRICS = List.of(
+        "dcVoltage", "currentActual", "speedActual", "actualPower",
+        "motorTemp", "inverterTemp", "motorLoadRate", "inverterLoadRate");
 
     private final RealDataMapper realDataMapper;
     private final TelemetryDataAnalyzer telemetryDataAnalyzer;
@@ -59,6 +65,23 @@ public class TelemetryQueryService {
             telemetry.deviceName(), telemetry.inverterName(), telemetry.startTime(), telemetry.endTime(),
             telemetry.rawRecords());
         return telemetry.fallbackUsed() ? result.withFallbackToLatestData(true) : result;
+    }
+
+    /**
+     * 读取一次受控遥测数据并生成报告所需的快照、通用统计和降采样趋势。
+     * <p>
+     * 统计与趋势直接复用同一次 {@link TelemetryDataAnalyzer} 分析的过滤和去重结果，
+     * 不调用 HTTP 接口，也不会再次访问遥测表。
+     */
+    public TelemetryReportSnapshot queryReportTelemetry(String deviceName, String inverterName,
+                                                        LocalDateTime startTime, LocalDateTime endTime) {
+        QueriedTelemetry telemetry = loadTelemetry(deviceName, inverterName, startTime, endTime);
+        TelemetryReportSnapshot analysis = telemetryDataAnalyzer.analyzeReport(
+            telemetry.deviceName(), telemetry.inverterName(), telemetry.startTime(), telemetry.endTime(),
+            telemetry.rawRecords(), REPORT_METRICS, REPORT_SERIES_BUCKET_MINUTES);
+        TelemetryQueryResult snapshot = telemetry.fallbackUsed()
+            ? analysis.telemetry().withFallbackToLatestData(true) : analysis.telemetry();
+        return new TelemetryReportSnapshot(snapshot, analysis.statistics(), analysis.series());
     }
 
     /**

@@ -16,6 +16,7 @@ import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -164,6 +165,27 @@ class MarkdownOperationReportRendererTest {
             + "电机负载率最高值出现于 2026-08-04 10:17:00。"));
     }
 
+    @Test
+    void rendererShowsNewMetricsAndStructuredTrendFacts() {
+        OperationReportResult base = faultResult();
+        OperationReportResult result = new OperationReportResult(base.metadata(), base.asset(), base.period(),
+            base.overallStatus(), base.summary(), base.dataQuality(),
+            List.of(new OperationReportResult.Metric("dcVoltage", null, 620D, 610D, 630D, 10, null),
+                new OperationReportResult.Metric("currentActual", null, 12D, 10D, 14D, 10, null)),
+            List.of(new OperationReportResult.Trend("dcVoltage", List.of(
+                new OperationReportResult.TrendPoint(BASE_TIME, 620D, 2L),
+                new OperationReportResult.TrendPoint(BASE_TIME.plusMinutes(1), 625D, 3L)))),
+            base.events(), base.statusTimeline(), base.diagnosis(), base.recommendations(), base.evidence(), base.limitations());
+
+        String markdown = MarkdownOperationReportRenderer.renderConcise(result, null,
+            Map.of("dc-voltage", "V", "current-actual", "A"));
+
+        assertTrue(markdown.contains("直流电压（V）：最低 610，平均 620，最高 630"));
+        assertTrue(markdown.contains("实际电流（A）：最低 10，平均 12，最高 14"));
+        assertTrue(markdown.contains("## 运行趋势"));
+        assertTrue(markdown.contains("2026-08-04 10:00:00 620（2 条）"));
+    }
+
     private static final LocalDateTime BASE_TIME = LocalDateTime.of(2026, 8, 4, 10, 0);
 
     /** 故障持续中：窗口末尾事件仍携带 F30005。 */
@@ -234,9 +256,41 @@ class MarkdownOperationReportRendererTest {
             new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
             new TelemetryStatistics(10, 12.1, 25.2, 18.7, 42.1, 76.2, 58.3, 38.2, 63.1, 49.6, 104.3, 104.3),
             faultCodes, alarmCodes, List.of(), List.of(), candidates, recommendations, limitations, evidence);
-        return new OperationReportResult("RP-1", "G120电机1", "INV-1", start, end,
-            end.plusSeconds(30), health, "本周期设备状态：" + health.getDisplayName() + "。",
-            telemetry, diagnosis);
+        return OperationReportResult.fromSources("RP-1", "G120电机1", "INV-1", start, end,
+            end.plusSeconds(30), health,
+            new OperationReportResult.Summary("本周期设备状态：" + health.getDisplayName() + "。",
+                faultCodes, alarmCodes, !fallback && status != DiagnosisStatus.DATA_INSUFFICIENT),
+            telemetry, reportStatistics(telemetry), null, diagnosis);
+    }
+
+    private static TelemetryStatisticsResult reportStatistics(TelemetryQueryResult telemetry) {
+        TelemetryStatistics statistics = telemetry.statistics();
+        return new TelemetryStatisticsResult("G120电机1", "INV-1", telemetry.startTime(), telemetry.endTime(),
+            statistics.sampleCount(), Map.of(
+                "actualPower", values(statistics.avgActualPower(), statistics.minActualPower(),
+                    statistics.maxActualPower(), statistics.sampleCount()),
+                "motorTemp", values(statistics.avgMotorTemp(), statistics.minMotorTemp(),
+                    statistics.maxMotorTemp(), statistics.sampleCount()),
+                "inverterTemp", values(statistics.avgInverterTemp(), statistics.minInverterTemp(),
+                    statistics.maxInverterTemp(), statistics.sampleCount()),
+                "motorLoadRate", values(null, null, statistics.maxMotorLoadRate(), statistics.sampleCount()),
+                "inverterLoadRate", values(null, null, statistics.maxInverterLoadRate(), statistics.sampleCount())),
+            telemetry.quality());
+    }
+
+    private static Map<String, Number> values(Double average, Double minimum, Double maximum, int count) {
+        java.util.LinkedHashMap<String, Number> values = new java.util.LinkedHashMap<>();
+        if (average != null) {
+            values.put("avg", average);
+        }
+        if (minimum != null) {
+            values.put("min", minimum);
+        }
+        if (maximum != null) {
+            values.put("max", maximum);
+        }
+        values.put("count", count);
+        return Map.copyOf(values);
     }
 
 }

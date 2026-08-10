@@ -16,6 +16,7 @@ import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -233,8 +234,44 @@ class OperationReportSnapshotTest {
             telemetry.fallbackToLatestData(), telemetry.latestObservedAt(), null,
             telemetry.quality(), telemetry.statistics(), faultCodes, alarmCodes, List.of(), List.of(),
             candidates, recommendations, limitations, evidence);
-        return new OperationReportResult("RP-1", "G120电机1", "INV-1", REQUEST_START, REQUEST_END,
-            GENERATED_AT, health, summary, telemetry, diagnosis);
+        return OperationReportResult.fromSources("RP-1", "G120电机1", "INV-1", REQUEST_START, REQUEST_END,
+            GENERATED_AT, health,
+            new OperationReportResult.Summary(summary, faultCodes, alarmCodes,
+                !telemetry.fallbackToLatestData() && status != DiagnosisStatus.DATA_INSUFFICIENT),
+            telemetry, reportStatistics(telemetry), null, diagnosis);
+    }
+
+    private static TelemetryStatisticsResult reportStatistics(TelemetryQueryResult telemetry) {
+        if (telemetry.quality() == null || !telemetry.quality().sufficient()) {
+            return null;
+        }
+        TelemetryStatistics statistics = telemetry.statistics();
+        return new TelemetryStatisticsResult("G120电机1", "INV-1", telemetry.startTime(), telemetry.endTime(),
+            statistics.sampleCount(), Map.of(
+                "actualPower", values(statistics.avgActualPower(), statistics.minActualPower(),
+                    statistics.maxActualPower(), statistics.sampleCount()),
+                "motorTemp", values(statistics.avgMotorTemp(), statistics.minMotorTemp(),
+                    statistics.maxMotorTemp(), statistics.sampleCount()),
+                "inverterTemp", values(statistics.avgInverterTemp(), statistics.minInverterTemp(),
+                    statistics.maxInverterTemp(), statistics.sampleCount()),
+                "motorLoadRate", values(null, null, statistics.maxMotorLoadRate(), statistics.sampleCount()),
+                "inverterLoadRate", values(null, null, statistics.maxInverterLoadRate(), statistics.sampleCount())),
+            telemetry.quality());
+    }
+
+    private static Map<String, Number> values(Double average, Double minimum, Double maximum, int count) {
+        java.util.LinkedHashMap<String, Number> values = new java.util.LinkedHashMap<>();
+        if (average != null) {
+            values.put("avg", average);
+        }
+        if (minimum != null) {
+            values.put("min", minimum);
+        }
+        if (maximum != null) {
+            values.put("max", maximum);
+        }
+        values.put("count", count);
+        return Map.copyOf(values);
     }
 
     private static String golden(String name) {

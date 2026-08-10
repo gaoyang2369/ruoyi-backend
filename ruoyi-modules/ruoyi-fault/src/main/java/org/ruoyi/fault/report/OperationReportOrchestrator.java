@@ -7,6 +7,7 @@ import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.springframework.stereotype.Service;
 
@@ -41,8 +42,9 @@ public class OperationReportOrchestrator {
     }
 
     public OperationReportResult generate(DiagnosisCommand command) {
-        TelemetryQueryResult telemetry = telemetryQueryService.queryTelemetry(
+        TelemetryReportSnapshot reportSnapshot = telemetryQueryService.queryReportTelemetry(
             command.deviceName(), command.inverterName(), command.startTime(), command.endTime());
+        TelemetryQueryResult telemetry = reportSnapshot.telemetry();
         DiagnosisResult diagnosis = faultDiagnosisOrchestrator.diagnose(command, telemetry);
         ReportHealthStatus healthStatus = ReportHealthStatus.fromDiagnosisStatus(diagnosis.status());
         return OperationReportResult.fromSources(
@@ -55,6 +57,8 @@ public class OperationReportOrchestrator {
             healthStatus,
             buildSummary(healthStatus, telemetry, diagnosis),
             telemetry,
+            reportSnapshot.statistics(),
+            reportSnapshot.series(),
             diagnosis);
     }
 

@@ -95,8 +95,10 @@ class OperationReportNarratorTest {
             new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
             new TelemetryStatistics(10, null, null, null, null, null, null, null, null, null, null, null),
             List.of(), List.of("A07089"), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
-        return new OperationReportResult("RP-1", "设备A", "逆变器A", start, end, end.plusSeconds(30),
-            ReportHealthStatus.ATTENTION, "报告周期内设备状态：关注。", telemetry, diagnosis);
+        return OperationReportResult.fromSources("RP-1", "设备A", "逆变器A", start, end, end.plusSeconds(30),
+            ReportHealthStatus.ATTENTION,
+            new OperationReportResult.Summary("报告周期内设备状态：关注。", List.of(), List.of("A07089"), true),
+            telemetry, null, null, diagnosis);
     }
 
 }

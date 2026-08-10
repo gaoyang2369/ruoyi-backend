@@ -394,9 +394,10 @@ class FaultDiagnosisChatServiceTest {
                 List.of(new FaultKnowledgeEvidence(7L, "doc", "G120故障手册", "fragment", 0, "直流回路电压异常")),
                 List.of("EV-002"))),
             List.of("检查供电电压"), List.of(), List.of());
-        return new org.ruoyi.fault.report.OperationReportResult("RP-1", "设备A", "逆变器A", start, end,
-            end.plusSeconds(30), org.ruoyi.fault.report.ReportHealthStatus.ATTENTION, "报告周期内设备状态：关注。",
-            telemetry, diagnosis);
+        return org.ruoyi.fault.report.OperationReportResult.fromSources("RP-1", "设备A", "逆变器A", start, end,
+            end.plusSeconds(30), org.ruoyi.fault.report.ReportHealthStatus.ATTENTION,
+            new org.ruoyi.fault.report.OperationReportResult.Summary("报告周期内设备状态：关注。", List.of(),
+                List.of("A07089"), true), telemetry, null, null, diagnosis);
     }
 
     private static ChatRequest requestWithTimes() {

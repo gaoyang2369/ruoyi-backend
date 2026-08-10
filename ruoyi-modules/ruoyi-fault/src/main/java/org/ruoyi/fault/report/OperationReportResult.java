@@ -1,7 +1,6 @@
 package org.ruoyi.fault.report;
 
 import org.ruoyi.fault.domain.code.FaultCodeType;
-import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.evidence.enums.EvidenceType;
@@ -10,7 +9,8 @@ import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
-import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,6 +31,7 @@ public record OperationReportResult(
     Summary summary,
     DataQualitySummary dataQuality,
     List<Metric> metrics,
+    List<Trend> trends,
     List<Event> events,
     List<StatusTimelineEvent> statusTimeline,
     DiagnosisResult diagnosis,
@@ -43,6 +44,7 @@ public record OperationReportResult(
 
     public OperationReportResult {
         metrics = metrics == null ? List.of() : List.copyOf(metrics);
+        trends = trends == null ? List.of() : List.copyOf(trends);
         events = events == null ? List.of() : List.copyOf(events);
         statusTimeline = statusTimeline == null ? List.of() : List.copyOf(statusTimeline);
         recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
@@ -50,14 +52,13 @@ public record OperationReportResult(
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
     }
 
-    /**
-     * 从报告编排已得到的遥测和诊断快照投影出 V2。此方法只做对象转换，不访问数据库、不重新诊断。
-     */
+    /** 将一次遥测报告快照中的通用统计和分桶结果投影为 Report V2 metrics 与 trends。 */
     public static OperationReportResult fromSources(String reportId, String deviceName, String inverterName,
                                                      LocalDateTime requestedStart, LocalDateTime requestedEnd,
                                                      LocalDateTime generatedAt, ReportHealthStatus overallStatus,
                                                      Summary summary, TelemetryQueryResult telemetry,
-                                                     DiagnosisResult diagnosis) {
+                                                     TelemetryStatisticsResult statistics,
+                                                     TelemetrySeriesResult series, DiagnosisResult diagnosis) {
         TelemetryQueryResult source = telemetry == null ? emptyTelemetry() : telemetry;
         return new OperationReportResult(
             new Metadata(reportId, generatedAt, REPORT_TYPE),
@@ -67,7 +68,8 @@ public record OperationReportResult(
             overallStatus,
             summary,
             source.quality(),
-            metricsOf(source.statistics(), source.operation()),
+            metricsOf(statistics, source.operation()),
+            trendsOf(series),
             eventsOf(source.operation(), source.faultCodes(), source.alarmCodes(), source.statusEvents()),
             timelineOf(source.statusEvents()),
             diagnosis,
@@ -76,49 +78,52 @@ public record OperationReportResult(
             diagnosis == null ? List.of() : diagnosis.limitations());
     }
 
-    /**
-     * 兼容旧报告构造方式。新代码应调用 {@link #fromSources} 并使用 V2 字段。
-     */
-    @Deprecated
-    public OperationReportResult(String reportCode, String deviceName, String inverterName,
-                                 LocalDateTime requestedStartTime, LocalDateTime requestedEndTime,
-                                 LocalDateTime generatedAt, ReportHealthStatus healthStatus, String summary,
-                                 TelemetryQueryResult telemetry, DiagnosisResult diagnosis) {
-        this(fromSources(reportCode, deviceName, inverterName, requestedStartTime, requestedEndTime,
-            generatedAt, healthStatus,
-            new Summary(summary, diagnosis == null ? List.of() : diagnosis.faultCodes(),
-                diagnosis == null ? List.of() : diagnosis.alarmCodes(),
-                telemetry != null && !telemetry.fallbackToLatestData()
-                    && (diagnosis == null || diagnosis.status() != DiagnosisStatus.DATA_INSUFFICIENT)),
-            telemetry, diagnosis));
-    }
-
-    private OperationReportResult(OperationReportResult value) {
-        this(value.metadata, value.asset, value.period, value.overallStatus, value.summary, value.dataQuality,
-            value.metrics, value.events, value.statusTimeline, value.diagnosis, value.recommendations,
-            value.evidence, value.limitations);
-    }
-
     private static TelemetryQueryResult emptyTelemetry() {
         return new TelemetryQueryResult(null, null, null, null, List.of(), List.of(), List.of(), List.of(),
             null, null, false, null, List.of(), null);
     }
 
-    private static List<Metric> metricsOf(TelemetryStatistics statistics, OperationStatistics operation) {
-        if (statistics == null) {
+    private static List<Metric> metricsOf(TelemetryStatisticsResult statistics, OperationStatistics operation) {
+        if (statistics == null || statistics.metrics() == null) {
             return List.of();
         }
-        int count = statistics.sampleCount();
-        return List.of(
-            new Metric("actual-power", null, statistics.avgActualPower(), statistics.minActualPower(),
-                statistics.maxActualPower(), count, null),
-            new Metric("motor-temp", null, statistics.avgMotorTemp(), statistics.minMotorTemp(),
-                statistics.maxMotorTemp(), count, operation == null ? null : operation.maxMotorTempAt()),
-            new Metric("inverter-temp", null, statistics.avgInverterTemp(), statistics.minInverterTemp(),
-                statistics.maxInverterTemp(), count, null),
-            new Metric("motor-load-rate", null, null, null, statistics.maxMotorLoadRate(), count,
-                operation == null ? null : operation.maxMotorLoadRateAt()),
-            new Metric("inverter-load-rate", null, null, null, statistics.maxInverterLoadRate(), count, null));
+        return statistics.metrics().entrySet().stream().map(entry -> {
+            java.util.Map<String, Number> values = entry.getValue();
+            return new Metric(entry.getKey(), null, numberOf(values, "avg"), numberOf(values, "min"),
+                numberOf(values, "max"), integerOf(values, "count"), peakAt(entry.getKey(), operation));
+        }).toList();
+    }
+
+    /** 仅附加既有运行摘要已计算出的峰值时刻，不在报告层重新扫描遥测数据。 */
+    private static LocalDateTime peakAt(String metricName, OperationStatistics operation) {
+        if (operation == null) {
+            return null;
+        }
+        return switch (metricName) {
+            case "motorTemp" -> operation.maxMotorTempAt();
+            case "motorLoadRate" -> operation.maxMotorLoadRateAt();
+            default -> null;
+        };
+    }
+
+    private static List<Trend> trendsOf(TelemetrySeriesResult series) {
+        if (series == null || series.series() == null) {
+            return List.of();
+        }
+        return series.series().entrySet().stream()
+            .map(entry -> new Trend(entry.getKey(), entry.getValue().stream()
+                .map(point -> new TrendPoint(point.timestamp(), point.value(), point.count())).toList()))
+            .toList();
+    }
+
+    private static Double numberOf(java.util.Map<String, Number> values, String name) {
+        Number value = values == null ? null : values.get(name);
+        return value == null ? null : value.doubleValue();
+    }
+
+    private static Integer integerOf(java.util.Map<String, Number> values, String name) {
+        Number value = values == null ? null : values.get(name);
+        return value == null ? null : value.intValue();
     }
 
     private static List<Event> eventsOf(OperationStatistics operation, List<String> faultCodes,
@@ -236,6 +241,16 @@ public record OperationReportResult(
     /** 不填单位，避免在没有可靠配置时臆测单位。 */
     public record Metric(String metricName, Double current, Double average, Double minimum, Double maximum,
                          Integer count, LocalDateTime peakAt) {
+    }
+
+    /** 单个指标按既有遥测 series 分桶计算的事实趋势，不包含预测或趋势判断。 */
+    public record Trend(String metricName, List<TrendPoint> points) {
+        public Trend {
+            points = points == null ? List.of() : List.copyOf(points);
+        }
+    }
+
+    public record TrendPoint(LocalDateTime timestamp, Double value, long count) {
     }
 
     /** 一个故障码或报警码在窗口内的聚合事件。 */

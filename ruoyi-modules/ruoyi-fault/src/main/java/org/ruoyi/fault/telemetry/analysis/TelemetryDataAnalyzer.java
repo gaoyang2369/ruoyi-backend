@@ -10,6 +10,7 @@ import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.ruoyi.fault.telemetry.model.TelemetrySeriesPoint;
@@ -63,6 +64,33 @@ public class TelemetryDataAnalyzer {
                                         LocalDateTime startTime, LocalDateTime endTime,
                                         List<RealDataEntity> rawRecords) {
         AnalysisData analysis = prepareAnalysis(rawRecords, startTime, endTime);
+        return buildTelemetryResult(deviceName, inverterName, startTime, endTime, analysis);
+    }
+
+    /**
+     * 从同一份已完成过滤和去重的遥测数据生成报告所需的摘要、通用统计与降采样趋势。
+     * 该方法不读取数据库，也不会为 statistics 或 series 再次执行预处理。
+     */
+    public TelemetryReportSnapshot analyzeReport(String deviceName, String inverterName,
+                                                 LocalDateTime startTime, LocalDateTime endTime,
+                                                 List<RealDataEntity> rawRecords,
+                                                 List<String> requestedMetrics, int bucketMinutes) {
+        List<String> metrics = resolveMetrics(requestedMetrics);
+        validateBucketMinutes(bucketMinutes);
+        AnalysisData analysis = prepareAnalysis(rawRecords, startTime, endTime);
+        TelemetryQueryResult telemetry = buildTelemetryResult(deviceName, inverterName, startTime, endTime, analysis);
+        if (analysis.validRecords().isEmpty() || !analysis.quality().sufficient()) {
+            return new TelemetryReportSnapshot(telemetry, null, null);
+        }
+        return new TelemetryReportSnapshot(telemetry,
+            buildStatisticsResult(deviceName, inverterName, startTime, endTime, analysis, metrics,
+                Set.of("avg", "min", "max", "count"), true),
+            buildSeriesResult(deviceName, inverterName, startTime, endTime, analysis, metrics, bucketMinutes, true));
+    }
+
+    private TelemetryQueryResult buildTelemetryResult(String deviceName, String inverterName,
+                                                       LocalDateTime startTime, LocalDateTime endTime,
+                                                       AnalysisData analysis) {
         List<TimedRecord> validRecords = analysis.validRecords();
         DataQualitySummary quality = analysis.quality();
         CodeExtraction codes = extractClassifiedCodes(validRecords);
@@ -92,30 +120,7 @@ public class TelemetryDataAnalyzer {
         if (analysis.validRecords().isEmpty()) {
             throw new ServiceException("查询窗口内没有有效遥测数据");
         }
-
-        Map<String, Map<String, Number>> results = new LinkedHashMap<>();
-        for (String metric : metrics) {
-            NumericSummary summary = summarize(analysis.validRecords(), metricExtractor(metric));
-            if (summary.count() == 0) {
-                throw new ServiceException("指标 " + metric + " 在查询窗口内没有有效数据");
-            }
-            Map<String, Number> values = new LinkedHashMap<>();
-            if (aggregations.contains("avg")) {
-                values.put("avg", summary.average());
-            }
-            if (aggregations.contains("min")) {
-                values.put("min", summary.min());
-            }
-            if (aggregations.contains("max")) {
-                values.put("max", summary.max());
-            }
-            if (aggregations.contains("count")) {
-                values.put("count", summary.count());
-            }
-            results.put(metric, Map.copyOf(values));
-        }
-        return new TelemetryStatisticsResult(deviceName, inverterName, startTime, endTime,
-            analysis.validRecords().size(), Map.copyOf(results), analysis.quality());
+        return buildStatisticsResult(deviceName, inverterName, startTime, endTime, analysis, metrics, aggregations, false);
     }
 
     /** 在读取数据库前校验统计请求，避免非法指标触发不必要的数据查询。 */
@@ -137,7 +142,45 @@ public class TelemetryDataAnalyzer {
         if (analysis.validRecords().isEmpty()) {
             throw new ServiceException("查询窗口内没有有效遥测数据");
         }
+        return buildSeriesResult(deviceName, inverterName, startTime, endTime, analysis, metrics, bucketMinutes, false);
+    }
 
+    private TelemetryStatisticsResult buildStatisticsResult(String deviceName, String inverterName,
+                                                            LocalDateTime startTime, LocalDateTime endTime,
+                                                            AnalysisData analysis, List<String> metrics,
+                                                            Set<String> aggregations, boolean skipEmptyMetrics) {
+        Map<String, Map<String, Number>> results = new LinkedHashMap<>();
+        for (String metric : metrics) {
+            NumericSummary summary = summarize(analysis.validRecords(), metricExtractor(metric));
+            if (summary.count() == 0) {
+                if (skipEmptyMetrics) {
+                    continue;
+                }
+                throw new ServiceException("指标 " + metric + " 在查询窗口内没有有效数据");
+            }
+            Map<String, Number> values = new LinkedHashMap<>();
+            if (aggregations.contains("avg")) {
+                values.put("avg", summary.average());
+            }
+            if (aggregations.contains("min")) {
+                values.put("min", summary.min());
+            }
+            if (aggregations.contains("max")) {
+                values.put("max", summary.max());
+            }
+            if (aggregations.contains("count")) {
+                values.put("count", summary.count());
+            }
+            results.put(metric, Map.copyOf(values));
+        }
+        return new TelemetryStatisticsResult(deviceName, inverterName, startTime, endTime,
+            analysis.validRecords().size(), Map.copyOf(results), analysis.quality());
+    }
+
+    private TelemetrySeriesResult buildSeriesResult(String deviceName, String inverterName,
+                                                    LocalDateTime startTime, LocalDateTime endTime,
+                                                    AnalysisData analysis, List<String> metrics, int bucketMinutes,
+                                                    boolean skipEmptyMetrics) {
         Map<String, List<TelemetrySeriesPoint>> series = new LinkedHashMap<>();
         for (String metric : metrics) {
             Map<Long, SeriesBucketAccumulator> buckets = new LinkedHashMap<>();
@@ -152,6 +195,9 @@ public class TelemetryDataAnalyzer {
                 buckets.computeIfAbsent(bucketIndex, ignored -> new SeriesBucketAccumulator()).accept(value);
             }
             if (buckets.isEmpty()) {
+                if (skipEmptyMetrics) {
+                    continue;
+                }
                 throw new ServiceException("指标 " + metric + " 在查询窗口内没有有效数据");
             }
             List<TelemetrySeriesPoint> points = new ArrayList<>();

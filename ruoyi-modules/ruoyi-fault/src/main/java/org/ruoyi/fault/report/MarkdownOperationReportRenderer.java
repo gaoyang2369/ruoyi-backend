@@ -37,11 +37,14 @@ public final class MarkdownOperationReportRenderer {
     private static final int MAX_EVENT_ROWS = 100;
 
     /** 指标键，与 fault.diagnosis.metric-units 配置键一致。 */
-    private static final String METRIC_ACTUAL_POWER = "actual-power";
-    private static final String METRIC_MOTOR_TEMP = "motor-temp";
-    private static final String METRIC_INVERTER_TEMP = "inverter-temp";
-    private static final String METRIC_MOTOR_LOAD_RATE = "motor-load-rate";
-    private static final String METRIC_INVERTER_LOAD_RATE = "inverter-load-rate";
+    private static final String METRIC_DC_VOLTAGE = "dcVoltage";
+    private static final String METRIC_CURRENT_ACTUAL = "currentActual";
+    private static final String METRIC_SPEED_ACTUAL = "speedActual";
+    private static final String METRIC_ACTUAL_POWER = "actualPower";
+    private static final String METRIC_MOTOR_TEMP = "motorTemp";
+    private static final String METRIC_INVERTER_TEMP = "inverterTemp";
+    private static final String METRIC_MOTOR_LOAD_RATE = "motorLoadRate";
+    private static final String METRIC_INVERTER_LOAD_RATE = "inverterLoadRate";
 
     private MarkdownOperationReportRenderer() {
     }
@@ -70,6 +73,7 @@ public final class MarkdownOperationReportRenderer {
         appendCodeCards(out, result, true);
         appendRecommendations(out, "处理建议", result, narrative);
         appendConciseMetrics(out, result.metrics(), metricUnits);
+        appendTrendsSection(out, result.trends());
         appendConclusionBoundary(out, result.diagnosis());
         out.append("\n---\n\n完整明细（事件时间线、数据质量、证据溯源、报告编号 ")
             .append(result.metadata().reportId()).append("）请下载运行报告。\n");
@@ -92,6 +96,7 @@ public final class MarkdownOperationReportRenderer {
         appendCodeCards(out, result, false);
         appendRecommendations(out, "4. 代码说明与处理建议", result, narrative);
         appendMetricsSection(out, result.metrics(), metricUnits);
+        appendTrendsSection(out, result.trends());
         appendQualitySection(out, result);
         appendEventsSection(out, result.statusTimeline());
         appendLimitationsSection(out, result.limitations());
@@ -276,6 +281,9 @@ public final class MarkdownOperationReportRenderer {
             return List.of();
         }
         List<String> lines = new ArrayList<>();
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_DC_VOLTAGE), "直流电压");
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_CURRENT_ACTUAL), "实际电流");
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_SPEED_ACTUAL), "实际转速");
         addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_ACTUAL_POWER), "实际功率");
         addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_MOTOR_TEMP), "电机温度");
         addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_INVERTER_TEMP), "变频器温度");
@@ -285,6 +293,33 @@ public final class MarkdownOperationReportRenderer {
             addPeakLine(lines, metricOf(metrics, METRIC_MOTOR_TEMP), metricOf(metrics, METRIC_MOTOR_LOAD_RATE), metricUnits);
         }
         return List.copyOf(lines);
+    }
+
+    /** 只列出已有分桶事实，不作预测、斜率或异常趋势判断。 */
+    private static void appendTrendsSection(StringBuilder out, List<OperationReportResult.Trend> trends) {
+        if (trends == null || trends.isEmpty()) {
+            return;
+        }
+        out.append("\n## 运行趋势\n\n");
+        for (OperationReportResult.Trend trend : trends) {
+            if (trend.points().isEmpty()) {
+                continue;
+            }
+            out.append("- ").append(metricLabel(trend.metricName())).append("：");
+            int rendered = Math.min(trend.points().size(), 5);
+            for (int index = 0; index < rendered; index++) {
+                OperationReportResult.TrendPoint point = trend.points().get(index);
+                if (index > 0) {
+                    out.append("；");
+                }
+                out.append(formatTime(point.timestamp())).append(" ").append(number(point.value()))
+                    .append("（").append(point.count()).append(" 条）");
+            }
+            if (trend.points().size() > rendered) {
+                out.append("；其余 ").append(trend.points().size() - rendered).append(" 个分桶省略");
+            }
+            out.append('\n');
+        }
     }
 
     private static OperationReportResult.Metric metricOf(List<OperationReportResult.Metric> metrics, String name) {
@@ -476,7 +511,38 @@ public final class MarkdownOperationReportRenderer {
             return null;
         }
         String unit = metricUnits.get(key);
+        if (unit == null || unit.isBlank()) {
+            unit = metricUnits.get(legacyMetricKey(key));
+        }
         return unit == null || unit.isBlank() ? null : unit.trim();
+    }
+
+    private static String legacyMetricKey(String key) {
+        return switch (key) {
+            case METRIC_DC_VOLTAGE -> "dc-voltage";
+            case METRIC_CURRENT_ACTUAL -> "current-actual";
+            case METRIC_SPEED_ACTUAL -> "speed-actual";
+            case METRIC_ACTUAL_POWER -> "actual-power";
+            case METRIC_MOTOR_TEMP -> "motor-temp";
+            case METRIC_INVERTER_TEMP -> "inverter-temp";
+            case METRIC_MOTOR_LOAD_RATE -> "motor-load-rate";
+            case METRIC_INVERTER_LOAD_RATE -> "inverter-load-rate";
+            default -> key;
+        };
+    }
+
+    private static String metricLabel(String metricName) {
+        return switch (metricName) {
+            case METRIC_DC_VOLTAGE -> "直流电压";
+            case METRIC_CURRENT_ACTUAL -> "实际电流";
+            case METRIC_SPEED_ACTUAL -> "实际转速";
+            case METRIC_ACTUAL_POWER -> "实际功率";
+            case METRIC_MOTOR_TEMP -> "电机温度";
+            case METRIC_INVERTER_TEMP -> "变频器温度";
+            case METRIC_MOTOR_LOAD_RATE -> "电机负载率";
+            case METRIC_INVERTER_LOAD_RATE -> "变频器负载率";
+            default -> metricName;
+        };
     }
 
     private static String formatTime(LocalDateTime value) {

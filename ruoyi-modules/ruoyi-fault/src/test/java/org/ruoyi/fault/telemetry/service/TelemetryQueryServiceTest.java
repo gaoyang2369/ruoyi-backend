@@ -14,6 +14,7 @@ import org.ruoyi.fault.telemetry.analysis.TelemetryObservedAtParser;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.mapper.RealDataMapper;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 
@@ -205,6 +206,37 @@ class TelemetryQueryServiceTest {
     }
 
     @Test
+    void reportSnapshotReusesOneTelemetryReadForSummaryStatisticsAndSeries() {
+        properties.setNominalSamplingSeconds(60);
+        RealDataEntity first = reportEntity("2026-07-19 14:50:00", 600F);
+        RealDataEntity second = reportEntity("2026-07-19 14:51:00", 620F);
+        when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(List.of(first, second));
+
+        TelemetryReportSnapshot snapshot = service.queryReportTelemetry(
+            DEVICE_ONE, DEVICE_ONE, WINDOW_START, WINDOW_START.plusMinutes(2));
+
+        assertEquals(snapshot.telemetry().startTime(), snapshot.statistics().windowStart());
+        assertEquals(snapshot.telemetry().endTime(), snapshot.series().windowEnd());
+        assertEquals(610D, snapshot.statistics().metrics().get("dcVoltage").get("avg"));
+        assertEquals(2, snapshot.series().series().get("dcVoltage").size());
+        verify(realDataMapper, times(1)).selectTelemetry(eq("real_data_01"), eq(DEVICE_ONE), eq(DEVICE_ONE), any(), any());
+    }
+
+    @Test
+    void reportSnapshotSkipsMetricsAndSeriesWhenDataQualityIsInsufficient() {
+        when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(List.of(reportEntity("2026-07-19 14:50:00", 600F)));
+
+        TelemetryReportSnapshot snapshot = service.queryReportTelemetry(
+            DEVICE_ONE, DEVICE_ONE, WINDOW_START, WINDOW_END);
+
+        assertFalse(snapshot.telemetry().quality().sufficient());
+        assertEquals(null, snapshot.statistics());
+        assertEquals(null, snapshot.series());
+    }
+
+    @Test
     void rejectsInvalidSeriesBucketBeforeQueryingDatabase() {
         ServiceException exception = assertThrows(ServiceException.class,
             () -> service.querySeries(DEVICE_ONE, DEVICE_ONE, WINDOW_START, WINDOW_END,
@@ -275,6 +307,19 @@ class TelemetryQueryServiceTest {
         record.setAlarmCode("0");
         record.setMotorTemp(35F);
         record.setCreateTime(LocalDateTime.of(2026, 7, 19, 14, 50, 1));
+        return record;
+    }
+
+    private static RealDataEntity reportEntity(String timestamp, Float dcVoltage) {
+        RealDataEntity record = entity(timestamp);
+        record.setDcVoltage(dcVoltage);
+        record.setCurrentActual(dcVoltage / 10);
+        record.setSpeedActual(1450F + dcVoltage / 100);
+        record.setActualPower(dcVoltage / 100);
+        record.setMotorTemp(40F + dcVoltage / 100);
+        record.setInverterTemp(30F + dcVoltage / 100);
+        record.setMotorLoadRate(60F + dcVoltage / 100);
+        record.setInverterLoadRate(55F + dcVoltage / 100);
         return record;
     }
 
