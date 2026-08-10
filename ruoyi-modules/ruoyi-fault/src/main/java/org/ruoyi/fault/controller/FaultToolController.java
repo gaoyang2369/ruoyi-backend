@@ -10,6 +10,7 @@ import org.ruoyi.fault.controller.dto.FaultDiagnosisContextRequest;
 import org.ruoyi.fault.controller.dto.FaultDiagnosisRequest;
 import org.ruoyi.fault.controller.dto.FaultStatusRequest;
 import org.ruoyi.fault.controller.dto.TelemetryStatisticsRequest;
+import org.ruoyi.fault.controller.dto.TelemetrySeriesRequest;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
@@ -17,6 +18,7 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,6 +37,8 @@ import java.time.ZoneId;
 @RequestMapping("/internal/fault-tools")
 @RequiredArgsConstructor
 public class FaultToolController {
+
+    private static final int DEFAULT_SERIES_BUCKET_MINUTES = 1;
 
     private final TelemetryQueryService telemetryQueryService;
     private final FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
@@ -71,6 +75,18 @@ public class FaultToolController {
         TelemetryStatisticsResult result = telemetryQueryService.queryStatistics(
             request.deviceName(), inverterName, range.startTime(), range.endTime(),
             request.metrics(), request.aggregations());
+        return R.ok(result);
+    }
+
+    @PostMapping("/telemetry/series")
+    public R<TelemetrySeriesResult> telemetrySeries(@RequestBody TelemetrySeriesRequest request) {
+        int bucketMinutes = request.bucketMinutes() == null
+            ? DEFAULT_SERIES_BUCKET_MINUTES : request.bucketMinutes();
+        telemetryQueryService.validateSeriesRequest(request.metrics(), bucketMinutes);
+        TimeRange range = resolveTimeRange(null, null, request.windowMinutes());
+        String inverterName = resolveInverterName(request.deviceName(), request.inverterName());
+        TelemetrySeriesResult result = telemetryQueryService.querySeries(
+            request.deviceName(), inverterName, range.startTime(), range.endTime(), request.metrics(), bucketMinutes);
         return R.ok(result);
     }
 

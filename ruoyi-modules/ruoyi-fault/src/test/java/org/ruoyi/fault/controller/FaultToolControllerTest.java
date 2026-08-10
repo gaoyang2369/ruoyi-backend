@@ -15,6 +15,7 @@ import org.ruoyi.fault.controller.dto.FaultDiagnosisContextRequest;
 import org.ruoyi.fault.controller.dto.FaultDiagnosisRequest;
 import org.ruoyi.fault.controller.dto.FaultStatusRequest;
 import org.ruoyi.fault.controller.dto.TelemetryStatisticsRequest;
+import org.ruoyi.fault.controller.dto.TelemetrySeriesRequest;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
@@ -100,6 +101,19 @@ class FaultToolControllerTest {
         verify(telemetryQueryService).validateStatisticsRequest(List.of("dcVoltage"), List.of("avg", "count"));
         verify(telemetryQueryService).queryStatistics(eq("device"), eq("inverter"), start.capture(), end.capture(),
             eq(List.of("dcVoltage")), eq(List.of("avg", "count")));
+        assertEquals(start.getValue().plusMinutes(15), end.getValue());
+    }
+
+    @Test
+    void telemetrySeriesDefaultsToOneMinuteBucketsAndDelegatesToTelemetryService() {
+        controller.telemetrySeries(new TelemetrySeriesRequest(
+            "device", "inverter", 15, List.of("motorTemp"), null));
+
+        ArgumentCaptor<LocalDateTime> start = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> end = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(telemetryQueryService).validateSeriesRequest(List.of("motorTemp"), 1);
+        verify(telemetryQueryService).querySeries(eq("device"), eq("inverter"), start.capture(), end.capture(),
+            eq(List.of("motorTemp")), eq(1));
         assertEquals(start.getValue().plusMinutes(15), end.getValue());
     }
 

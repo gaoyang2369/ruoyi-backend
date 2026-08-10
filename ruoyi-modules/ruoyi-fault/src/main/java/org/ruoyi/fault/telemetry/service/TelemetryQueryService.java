@@ -8,6 +8,7 @@ import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.mapper.RealDataMapper;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -78,6 +79,22 @@ public class TelemetryQueryService {
     /** 校验内部工具统计请求支持的指标和统计方式。 */
     public void validateStatisticsRequest(List<String> metrics, List<String> aggregations) {
         telemetryDataAnalyzer.validateStatisticsRequest(metrics, aggregations);
+    }
+
+    /** 查询一个受授权资产在指定窗口内的降采样遥测时序。 */
+    public TelemetrySeriesResult querySeries(String deviceName, String inverterName,
+                                              LocalDateTime startTime, LocalDateTime endTime,
+                                              List<String> metrics, int bucketMinutes) {
+        validateSeriesRequest(metrics, bucketMinutes);
+        QueriedTelemetry telemetry = loadTelemetry(deviceName, inverterName, startTime, endTime);
+        return telemetryDataAnalyzer.analyzeSeries(
+            telemetry.deviceName(), telemetry.inverterName(), telemetry.startTime(), telemetry.endTime(),
+            telemetry.rawRecords(), metrics, bucketMinutes);
+    }
+
+    /** 校验内部工具时序请求支持的指标和分桶长度。 */
+    public void validateSeriesRequest(List<String> metrics, int bucketMinutes) {
+        telemetryDataAnalyzer.validateSeriesRequest(metrics, bucketMinutes);
     }
 
     private QueriedTelemetry loadTelemetry(String deviceName, String inverterName,

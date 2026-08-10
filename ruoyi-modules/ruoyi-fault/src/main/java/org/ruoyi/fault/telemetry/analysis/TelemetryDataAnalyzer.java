@@ -12,6 +12,8 @@ import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesPoint;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -120,6 +122,60 @@ public class TelemetryDataAnalyzer {
     public void validateStatisticsRequest(List<String> requestedMetrics, List<String> requestedAggregations) {
         resolveMetrics(requestedMetrics);
         resolveAggregations(requestedAggregations);
+    }
+
+    /**
+     * 按查询窗口起点分桶并计算各桶平均值；每个桶均使用已精确过滤、确定性去重后的有效遥测记录。
+     */
+    public TelemetrySeriesResult analyzeSeries(String deviceName, String inverterName,
+                                               LocalDateTime startTime, LocalDateTime endTime,
+                                               List<RealDataEntity> rawRecords,
+                                               List<String> requestedMetrics, int bucketMinutes) {
+        List<String> metrics = resolveMetrics(requestedMetrics);
+        validateBucketMinutes(bucketMinutes);
+        AnalysisData analysis = prepareAnalysis(rawRecords, startTime, endTime);
+        if (analysis.validRecords().isEmpty()) {
+            throw new ServiceException("查询窗口内没有有效遥测数据");
+        }
+
+        Map<String, List<TelemetrySeriesPoint>> series = new LinkedHashMap<>();
+        for (String metric : metrics) {
+            Map<Long, SeriesBucketAccumulator> buckets = new LinkedHashMap<>();
+            Function<RealDataEntity, Float> extractor = metricExtractor(metric);
+            for (TimedRecord record : analysis.validRecords()) {
+                Float value = extractor.apply(record.data());
+                if (value == null) {
+                    continue;
+                }
+                long bucketIndex = Duration.between(startTime, record.observedAt()).toSeconds()
+                    / (bucketMinutes * 60L);
+                buckets.computeIfAbsent(bucketIndex, ignored -> new SeriesBucketAccumulator()).accept(value);
+            }
+            if (buckets.isEmpty()) {
+                throw new ServiceException("指标 " + metric + " 在查询窗口内没有有效数据");
+            }
+            List<TelemetrySeriesPoint> points = new ArrayList<>();
+            for (Map.Entry<Long, SeriesBucketAccumulator> entry : buckets.entrySet()) {
+                SeriesBucketAccumulator bucket = entry.getValue();
+                points.add(new TelemetrySeriesPoint(startTime.plusMinutes(entry.getKey() * (long) bucketMinutes),
+                    round(bucket.average()), bucket.count()));
+            }
+            series.put(metric, List.copyOf(points));
+        }
+        return new TelemetrySeriesResult(deviceName, inverterName, startTime, endTime, bucketMinutes,
+            analysis.validRecords().size(), Map.copyOf(series), analysis.quality());
+    }
+
+    /** 在读取数据库前校验时序请求，避免非法指标或桶长度触发不必要的数据查询。 */
+    public void validateSeriesRequest(List<String> requestedMetrics, int bucketMinutes) {
+        resolveMetrics(requestedMetrics);
+        validateBucketMinutes(bucketMinutes);
+    }
+
+    private void validateBucketMinutes(int bucketMinutes) {
+        if (bucketMinutes <= 0) {
+            throw new ServiceException("时间分桶分钟数必须大于0");
+        }
     }
 
     private AnalysisData prepareAnalysis(List<RealDataEntity> rawRecords,
@@ -603,6 +659,25 @@ public class TelemetryDataAnalyzer {
 
     /** 单个数值指标的统计摘要。 */
     private record NumericSummary(Double min, Double max, Double average, long count) {
+    }
+
+    /** 单个时间桶内的可空数值指标累加器。 */
+    private static final class SeriesBucketAccumulator {
+        private double total;
+        private long count;
+
+        private void accept(Float value) {
+            total += value;
+            count++;
+        }
+
+        private double average() {
+            return total / count;
+        }
+
+        private long count() {
+            return count;
+        }
     }
 
     /** 单个代码在窗口末尾的活动性与恢复确认时间。 */

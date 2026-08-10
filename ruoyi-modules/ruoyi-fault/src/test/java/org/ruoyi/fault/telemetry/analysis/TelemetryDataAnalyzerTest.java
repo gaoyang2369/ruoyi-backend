@@ -8,6 +8,7 @@ import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -253,6 +254,47 @@ class TelemetryDataAnalyzerTest {
                 List.of("dcVoltage"), List.of("avg")));
 
         assertEquals("查询窗口内没有有效遥测数据", exception.getMessage());
+    }
+
+    @Test
+    void seriesReuseDeduplicationAndSkipNullMetricValues() {
+        LocalDateTime start = LocalDateTime.of(2026, 7, 24, 9, 0);
+        LocalDateTime end = start.plusMinutes(2);
+        RealDataEntity olderDuplicate = telemetry(1L, "2026-07-24 09:00:10", null, null,
+            start.plusSeconds(11), "RUNNING", "0", 10F);
+        olderDuplicate.setDcVoltage(600F);
+        RealDataEntity newerDuplicate = telemetry(2L, "2026-07-24 09:00:10", null, null,
+            start.plusSeconds(12), "RUNNING", "0", 10F);
+        newerDuplicate.setDcVoltage(610F);
+        RealDataEntity sameBucket = telemetry(3L, "2026-07-24 09:00:50", null, null,
+            start.plusSeconds(51), "RUNNING", "0", 10F);
+        sameBucket.setDcVoltage(650F);
+        RealDataEntity nextBucket = telemetry(4L, "2026-07-24 09:01:05", null, null,
+            start.plusMinutes(1).plusSeconds(6), "RUNNING", "0", 10F);
+        nextBucket.setDcVoltage(700F);
+        RealDataEntity nullValue = telemetry(5L, "2026-07-24 09:01:20", null, null,
+            start.plusMinutes(1).plusSeconds(21), "RUNNING", "0", 10F);
+
+        TelemetrySeriesResult result = analyzer.analyzeSeries("G120-1", "INV-1", start, end,
+            List.of(olderDuplicate, newerDuplicate, sameBucket, nextBucket, nullValue), List.of("dcVoltage"), 1);
+
+        assertEquals(4, result.sampleCount());
+        assertEquals(1, result.dataQuality().duplicateCount());
+        assertEquals(2, result.series().get("dcVoltage").size());
+        assertEquals(start, result.series().get("dcVoltage").get(0).timestamp());
+        assertEquals(630D, result.series().get("dcVoltage").get(0).value());
+        assertEquals(2L, result.series().get("dcVoltage").get(0).count());
+        assertEquals(start.plusMinutes(1), result.series().get("dcVoltage").get(1).timestamp());
+        assertEquals(700D, result.series().get("dcVoltage").get(1).value());
+        assertEquals(1L, result.series().get("dcVoltage").get(1).count());
+    }
+
+    @Test
+    void seriesRejectsNonPositiveBucketMinutes() {
+        ServiceException exception = assertThrows(ServiceException.class,
+            () -> analyzer.validateSeriesRequest(List.of("dcVoltage"), 0));
+
+        assertEquals("时间分桶分钟数必须大于0", exception.getMessage());
     }
 
     private RealDataEntity telemetry(Long id, String timestamp, String date, String time,

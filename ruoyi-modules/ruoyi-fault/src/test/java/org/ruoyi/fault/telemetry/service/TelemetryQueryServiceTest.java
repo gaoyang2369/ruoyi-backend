@@ -15,6 +15,7 @@ import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.mapper.RealDataMapper;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
+import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -185,6 +186,31 @@ class TelemetryQueryServiceTest {
                 List.of("madeUpMetric"), List.of("avg")));
 
         assertTrue(exception.getMessage().contains("不支持的遥测指标"));
+        verify(realDataMapper, never()).selectTelemetry(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void seriesUseSameControlledTelemetryQuery() {
+        RealDataEntity record = entity("2026-07-19 14:50:01");
+        record.setMotorTemp(45F);
+        when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(List.of(record));
+
+        TelemetrySeriesResult result = service.querySeries(DEVICE_ONE, DEVICE_ONE, WINDOW_START, WINDOW_END,
+            List.of("motorTemp"), 1);
+
+        assertEquals(1, result.series().get("motorTemp").size());
+        assertEquals(45D, result.series().get("motorTemp").get(0).value());
+        verify(realDataMapper).selectTelemetry(eq("real_data_01"), eq(DEVICE_ONE), eq(DEVICE_ONE), any(), any());
+    }
+
+    @Test
+    void rejectsInvalidSeriesBucketBeforeQueryingDatabase() {
+        ServiceException exception = assertThrows(ServiceException.class,
+            () -> service.querySeries(DEVICE_ONE, DEVICE_ONE, WINDOW_START, WINDOW_END,
+                List.of("motorTemp"), 0));
+
+        assertTrue(exception.getMessage().contains("时间分桶分钟数必须大于0"));
         verify(realDataMapper, never()).selectTelemetry(anyString(), anyString(), anyString(), any(), any());
     }
 
