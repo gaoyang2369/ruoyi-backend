@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @Tag("dev")
@@ -70,6 +71,18 @@ class FaultToolControllerTest {
     }
 
     @Test
+    void statusResolvesInverterWhenCallerOmitsIt() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 9, 10, 0);
+        LocalDateTime end = start.plusMinutes(30);
+        when(telemetryQueryService.resolveInverterName("device")).thenReturn("resolved-inverter");
+
+        controller.status(new FaultStatusRequest("device", null, start, end, null));
+
+        verify(telemetryQueryService).resolveInverterName("device");
+        verify(telemetryQueryService).queryTelemetry("device", "resolved-inverter", start, end);
+    }
+
+    @Test
     void faultCodeDelegatesToKnowledgeService() {
         controller.faultCode(new FaultCodeRequest("F30005", List.of(7L, 8L)));
 
@@ -101,6 +114,23 @@ class FaultToolControllerTest {
         assertEquals(3L, command.context().userId());
         assertEquals("tenant", command.context().tenantId());
         assertEquals("request-1", command.context().requestId());
+    }
+
+    @Test
+    void diagnoseResolvesInverterWhenCallerOmitsIt() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 9, 10, 0);
+        LocalDateTime end = start.plusMinutes(30);
+        FaultDiagnosisContextRequest context = new FaultDiagnosisContextRequest(
+            null, null, null, null, "request-2");
+        when(telemetryQueryService.resolveInverterName("device")).thenReturn("resolved-inverter");
+
+        controller.diagnose(new FaultDiagnosisRequest(
+            "device", null, start, end, null, null, List.of(), context));
+
+        ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
+        verify(telemetryQueryService).resolveInverterName("device");
+        verify(faultDiagnosisOrchestrator).diagnose(captor.capture());
+        assertEquals("resolved-inverter", captor.getValue().inverterName());
     }
 
     @Test

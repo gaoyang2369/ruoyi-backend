@@ -16,6 +16,7 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -41,8 +42,9 @@ public class FaultToolController {
     @PostMapping("/status")
     public R<TelemetryQueryResult> status(@RequestBody FaultStatusRequest request) {
         TimeRange range = resolveTimeRange(request.startTime(), request.endTime(), request.recentMinutes());
+        String inverterName = resolveInverterName(request.deviceName(), request.inverterName());
         TelemetryQueryResult result = telemetryQueryService.queryTelemetry(
-            request.deviceName(), request.inverterName(), range.startTime(), range.endTime());
+            request.deviceName(), inverterName, range.startTime(), range.endTime());
         return R.ok(result);
     }
 
@@ -61,8 +63,19 @@ public class FaultToolController {
 
     private DiagnosisCommand buildDiagnosisCommand(FaultDiagnosisRequest request) {
         TimeRange range = resolveTimeRange(request.startTime(), request.endTime(), request.recentMinutes());
-        return new DiagnosisCommand(request.deviceName(), request.inverterName(), range.startTime(), range.endTime(),
+        String inverterName = resolveInverterName(request.deviceName(), request.inverterName());
+        return new DiagnosisCommand(request.deviceName(), inverterName, range.startTime(), range.endTime(),
             request.symptom(), request.knowledgeBaseIds(), buildContext(request.context()));
+    }
+
+    /**
+     * 工具调用方可以只提供用户可识别的设备名；逆变器名由受控遥测表确定性补全。
+     * 显式提供时保留调用方选择，避免多逆变器设备被错误归并。
+     */
+    private String resolveInverterName(String deviceName, String inverterName) {
+        return StringUtils.hasText(inverterName)
+            ? inverterName.trim()
+            : telemetryQueryService.resolveInverterName(deviceName);
     }
 
     private DiagnosisRequestContext buildContext(FaultDiagnosisContextRequest context) {
