@@ -7,6 +7,7 @@ import org.ruoyi.fault.telemetry.analysis.TelemetryDataAnalyzer;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.mapper.RealDataMapper;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -52,6 +53,35 @@ public class TelemetryQueryService {
      */
     public TelemetryQueryResult queryTelemetry(String deviceName, String inverterName,
                                                 LocalDateTime startTime, LocalDateTime endTime) {
+        QueriedTelemetry telemetry = loadTelemetry(deviceName, inverterName, startTime, endTime);
+        TelemetryQueryResult result = telemetryDataAnalyzer.analyze(
+            telemetry.deviceName(), telemetry.inverterName(), telemetry.startTime(), telemetry.endTime(),
+            telemetry.rawRecords());
+        return telemetry.fallbackUsed() ? result.withFallbackToLatestData(true) : result;
+    }
+
+    /**
+     * 查询一个受授权资产在指定窗口内的指定数值指标统计。
+     * <p>
+     * 数据读取、最新数据回退、业务时间过滤、去重和质量统计与 {@link #queryTelemetry} 复用同一条链路。
+     */
+    public TelemetryStatisticsResult queryStatistics(String deviceName, String inverterName,
+                                                      LocalDateTime startTime, LocalDateTime endTime,
+                                                      List<String> metrics, List<String> aggregations) {
+        validateStatisticsRequest(metrics, aggregations);
+        QueriedTelemetry telemetry = loadTelemetry(deviceName, inverterName, startTime, endTime);
+        return telemetryDataAnalyzer.analyzeStatistics(
+            telemetry.deviceName(), telemetry.inverterName(), telemetry.startTime(), telemetry.endTime(),
+            telemetry.rawRecords(), metrics, aggregations);
+    }
+
+    /** 校验内部工具统计请求支持的指标和统计方式。 */
+    public void validateStatisticsRequest(List<String> metrics, List<String> aggregations) {
+        telemetryDataAnalyzer.validateStatisticsRequest(metrics, aggregations);
+    }
+
+    private QueriedTelemetry loadTelemetry(String deviceName, String inverterName,
+                                           LocalDateTime startTime, LocalDateTime endTime) {
         String normalizedDeviceName = normalizeRequiredText(deviceName, "设备名称不能为空");
         String normalizedInverterName = normalizeRequiredText(inverterName, "逆变器名称不能为空");
         validateRequest(normalizedDeviceName, startTime, endTime);
@@ -87,10 +117,8 @@ public class TelemetryQueryService {
             }
         }
 
-        TelemetryQueryResult result = telemetryDataAnalyzer.analyze(
-            normalizedDeviceName, normalizedInverterName, effectiveStart, effectiveEnd,
-            rawRecords == null ? List.of() : rawRecords);
-        return fallbackUsed ? result.withFallbackToLatestData(true) : result;
+        return new QueriedTelemetry(normalizedDeviceName, normalizedInverterName, effectiveStart, effectiveEnd,
+            rawRecords == null ? List.of() : rawRecords, fallbackUsed);
     }
 
     /**
@@ -205,6 +233,11 @@ public class TelemetryQueryService {
             throw new ServiceException(errorMessage);
         }
         return value.trim();
+    }
+
+    /** 统一遥测数据读取链路的受控查询结果。 */
+    private record QueriedTelemetry(String deviceName, String inverterName, LocalDateTime startTime,
+                                    LocalDateTime endTime, List<RealDataEntity> rawRecords, boolean fallbackUsed) {
     }
 
 }

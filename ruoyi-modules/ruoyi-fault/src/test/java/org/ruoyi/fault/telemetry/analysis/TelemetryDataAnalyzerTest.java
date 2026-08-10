@@ -4,14 +4,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -206,6 +209,50 @@ class TelemetryDataAnalyzerTest {
         assertEquals(2, result.operation().alarmCodeOccurrences().get(0).sampleCount());
         assertEquals(start.plusSeconds(1), result.operation().maxMotorTempAt());
         assertEquals(start.plusSeconds(1), result.operation().maxMotorLoadRateAt());
+    }
+
+    @Test
+    void statisticsReuseTimeFilteringAndDeduplication() {
+        RealDataEntity olderDuplicate = telemetry(1L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(1), "RUNNING", "0", 10F);
+        olderDuplicate.setDcVoltage(600F);
+        RealDataEntity newerDuplicate = telemetry(2L, "2026-07-24 09:00:00", null, null,
+            START_TIME.plusSeconds(2), "RUNNING", "0", 10F);
+        newerDuplicate.setDcVoltage(610F);
+        newerDuplicate.setMotorTemp(42F);
+        RealDataEntity second = telemetry(3L, "2026-07-24 09:00:01", null, null,
+            START_TIME.plusSeconds(3), "RUNNING", "0", 10F);
+        second.setDcVoltage(650F);
+        second.setMotorTemp(48F);
+
+        TelemetryStatisticsResult result = analyzer.analyzeStatistics("G120-1", "INV-1", START_TIME, END_TIME,
+            List.of(olderDuplicate, newerDuplicate, second), List.of("dcVoltage", "motorTemp"),
+            List.of("avg", "min", "max", "count"));
+
+        assertEquals(2, result.sampleCount());
+        assertEquals(1, result.dataQuality().duplicateCount());
+        assertEquals(630D, result.metrics().get("dcVoltage").get("avg"));
+        assertEquals(610D, result.metrics().get("dcVoltage").get("min"));
+        assertEquals(650D, result.metrics().get("dcVoltage").get("max"));
+        assertEquals(2L, result.metrics().get("dcVoltage").get("count"));
+        assertEquals(48D, result.metrics().get("motorTemp").get("max"));
+    }
+
+    @Test
+    void statisticsRejectUnsupportedMetricBeforeCalculation() {
+        ServiceException exception = assertThrows(ServiceException.class,
+            () -> analyzer.validateStatisticsRequest(List.of("madeUpMetric"), List.of("avg")));
+
+        assertTrue(exception.getMessage().contains("不支持的遥测指标"));
+    }
+
+    @Test
+    void statisticsRejectWindowWithoutValidTelemetry() {
+        ServiceException exception = assertThrows(ServiceException.class,
+            () -> analyzer.analyzeStatistics("G120-1", "INV-1", START_TIME, END_TIME, List.of(),
+                List.of("dcVoltage"), List.of("avg")));
+
+        assertEquals("查询窗口内没有有效遥测数据", exception.getMessage());
     }
 
     private RealDataEntity telemetry(Long id, String timestamp, String date, String time,

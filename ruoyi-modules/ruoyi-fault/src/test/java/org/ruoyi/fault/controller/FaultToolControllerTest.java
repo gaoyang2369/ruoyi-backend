@@ -14,6 +14,7 @@ import org.ruoyi.fault.controller.dto.FaultCodeRequest;
 import org.ruoyi.fault.controller.dto.FaultDiagnosisContextRequest;
 import org.ruoyi.fault.controller.dto.FaultDiagnosisRequest;
 import org.ruoyi.fault.controller.dto.FaultStatusRequest;
+import org.ruoyi.fault.controller.dto.TelemetryStatisticsRequest;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
@@ -87,6 +88,19 @@ class FaultToolControllerTest {
         controller.faultCode(new FaultCodeRequest("F30005", List.of(7L, 8L)));
 
         verify(faultCodeKnowledgeQueryService).query("F30005", List.of(7L, 8L));
+    }
+
+    @Test
+    void telemetryStatisticsUsesWindowMinutesAndDelegatesToTelemetryService() {
+        controller.telemetryStatistics(new TelemetryStatisticsRequest(
+            "device", "inverter", 15, List.of("dcVoltage"), List.of("avg", "count")));
+
+        ArgumentCaptor<LocalDateTime> start = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> end = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(telemetryQueryService).validateStatisticsRequest(List.of("dcVoltage"), List.of("avg", "count"));
+        verify(telemetryQueryService).queryStatistics(eq("device"), eq("inverter"), start.capture(), end.capture(),
+            eq(List.of("dcVoltage")), eq(List.of("avg", "count")));
+        assertEquals(start.getValue().plusMinutes(15), end.getValue());
     }
 
     @Test

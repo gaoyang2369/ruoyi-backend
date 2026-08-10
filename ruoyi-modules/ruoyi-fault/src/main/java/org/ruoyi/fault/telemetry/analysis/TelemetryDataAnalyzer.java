@@ -1,6 +1,7 @@
 package org.ruoyi.fault.telemetry.analysis;
 
 import lombok.RequiredArgsConstructor;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.telemetry.entity.RealDataEntity;
@@ -10,6 +11,7 @@ import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
+import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -57,23 +60,126 @@ public class TelemetryDataAnalyzer {
     public TelemetryQueryResult analyze(String deviceName, String inverterName,
                                         LocalDateTime startTime, LocalDateTime endTime,
                                         List<RealDataEntity> rawRecords) {
-        ParseResult parseResult = parseAndFilter(rawRecords, startTime, endTime);
-        DeduplicationResult deduplication = deduplicate(parseResult.records());
-        List<TimedRecord> validRecords = deduplication.records();
-
-        DataQualitySummary quality = buildQuality(rawRecords.size(), validRecords, deduplication.duplicateCount(),
-            parseResult.invalidTimeCount(), startTime, endTime);
+        AnalysisData analysis = prepareAnalysis(rawRecords, startTime, endTime);
+        List<TimedRecord> validRecords = analysis.validRecords();
+        DataQualitySummary quality = analysis.quality();
         CodeExtraction codes = extractClassifiedCodes(validRecords);
         List<StatusEvent> statusEvents = buildStatusEvents(validRecords);
         TelemetryStatistics statistics = buildStatistics(validRecords);
         OperationStatistics operation = buildOperationStatistics(validRecords);
-        String sourceDigest = sourceDigest(deviceName, inverterName, startTime, endTime, rawRecords, quality);
+        String sourceDigest = sourceDigest(deviceName, inverterName, startTime, endTime, analysis.rawRecords(), quality);
         LocalDateTime latestObservedAt = validRecords.isEmpty()
             ? null : validRecords.get(validRecords.size() - 1).observedAt();
 
         return new TelemetryQueryResult(deviceName, startTime, endTime, quality, codes.faultCodes(),
             codes.alarmCodes(), codes.unknownCodes(), statusEvents, statistics, sourceDigest, false,
             latestObservedAt, codes.notes(), operation);
+    }
+
+    /**
+     * 计算指定数值指标的统计结果。其时间解析、精确过滤、去重和质量口径与 {@link #analyze} 完全一致。
+     */
+    public TelemetryStatisticsResult analyzeStatistics(String deviceName, String inverterName,
+                                                        LocalDateTime startTime, LocalDateTime endTime,
+                                                        List<RealDataEntity> rawRecords,
+                                                        List<String> requestedMetrics,
+                                                        List<String> requestedAggregations) {
+        List<String> metrics = resolveMetrics(requestedMetrics);
+        Set<String> aggregations = resolveAggregations(requestedAggregations);
+        AnalysisData analysis = prepareAnalysis(rawRecords, startTime, endTime);
+        if (analysis.validRecords().isEmpty()) {
+            throw new ServiceException("查询窗口内没有有效遥测数据");
+        }
+
+        Map<String, Map<String, Number>> results = new LinkedHashMap<>();
+        for (String metric : metrics) {
+            NumericSummary summary = summarize(analysis.validRecords(), metricExtractor(metric));
+            if (summary.count() == 0) {
+                throw new ServiceException("指标 " + metric + " 在查询窗口内没有有效数据");
+            }
+            Map<String, Number> values = new LinkedHashMap<>();
+            if (aggregations.contains("avg")) {
+                values.put("avg", summary.average());
+            }
+            if (aggregations.contains("min")) {
+                values.put("min", summary.min());
+            }
+            if (aggregations.contains("max")) {
+                values.put("max", summary.max());
+            }
+            if (aggregations.contains("count")) {
+                values.put("count", summary.count());
+            }
+            results.put(metric, Map.copyOf(values));
+        }
+        return new TelemetryStatisticsResult(deviceName, inverterName, startTime, endTime,
+            analysis.validRecords().size(), Map.copyOf(results), analysis.quality());
+    }
+
+    /** 在读取数据库前校验统计请求，避免非法指标触发不必要的数据查询。 */
+    public void validateStatisticsRequest(List<String> requestedMetrics, List<String> requestedAggregations) {
+        resolveMetrics(requestedMetrics);
+        resolveAggregations(requestedAggregations);
+    }
+
+    private AnalysisData prepareAnalysis(List<RealDataEntity> rawRecords,
+                                         LocalDateTime startTime, LocalDateTime endTime) {
+        List<RealDataEntity> sourceRecords = rawRecords == null ? List.of() : rawRecords;
+        ParseResult parseResult = parseAndFilter(sourceRecords, startTime, endTime);
+        DeduplicationResult deduplication = deduplicate(parseResult.records());
+        List<TimedRecord> validRecords = deduplication.records();
+        DataQualitySummary quality = buildQuality(sourceRecords.size(), validRecords, deduplication.duplicateCount(),
+            parseResult.invalidTimeCount(), startTime, endTime);
+        return new AnalysisData(sourceRecords, validRecords, quality);
+    }
+
+    private List<String> resolveMetrics(List<String> requestedMetrics) {
+        if (requestedMetrics == null || requestedMetrics.isEmpty()) {
+            throw new ServiceException("遥测指标列表不能为空");
+        }
+        LinkedHashSet<String> metrics = new LinkedHashSet<>();
+        for (String requestedMetric : requestedMetrics) {
+            if (!StringUtils.hasText(requestedMetric)) {
+                throw new ServiceException("遥测指标不能为空");
+            }
+            String metric = requestedMetric.trim();
+            metricExtractor(metric);
+            metrics.add(metric);
+        }
+        return List.copyOf(metrics);
+    }
+
+    private Set<String> resolveAggregations(List<String> requestedAggregations) {
+        if (requestedAggregations == null || requestedAggregations.isEmpty()) {
+            throw new ServiceException("统计方式列表不能为空");
+        }
+        LinkedHashSet<String> aggregations = new LinkedHashSet<>();
+        for (String requestedAggregation : requestedAggregations) {
+            if (!StringUtils.hasText(requestedAggregation)) {
+                throw new ServiceException("统计方式不能为空");
+            }
+            String aggregation = requestedAggregation.trim();
+            if (!Set.of("avg", "min", "max", "count").contains(aggregation)) {
+                throw new ServiceException("不支持的统计方式: " + aggregation + "，仅支持 avg、min、max、count");
+            }
+            aggregations.add(aggregation);
+        }
+        return Set.copyOf(aggregations);
+    }
+
+    private Function<RealDataEntity, Float> metricExtractor(String metric) {
+        return switch (metric) {
+            case "dcVoltage" -> RealDataEntity::getDcVoltage;
+            case "currentActual" -> RealDataEntity::getCurrentActual;
+            case "speedActual" -> RealDataEntity::getSpeedActual;
+            case "actualPower" -> RealDataEntity::getActualPower;
+            case "motorTemp" -> RealDataEntity::getMotorTemp;
+            case "inverterTemp" -> RealDataEntity::getInverterTemp;
+            case "motorLoadRate" -> RealDataEntity::getMotorLoadRate;
+            case "inverterLoadRate" -> RealDataEntity::getInverterLoadRate;
+            default -> throw new ServiceException("不支持的遥测指标: " + metric
+                + "，仅支持 dcVoltage、currentActual、speedActual、actualPower、motorTemp、inverterTemp、motorLoadRate、inverterLoadRate");
+        };
     }
 
     /**
@@ -319,9 +425,10 @@ public class TelemetryDataAnalyzer {
         DoubleSummaryStatistics statistics = records.stream().map(TimedRecord::data).map(extractor)
             .filter(Objects::nonNull).mapToDouble(Float::doubleValue).summaryStatistics();
         if (statistics.getCount() == 0) {
-            return new NumericSummary(null, null, null);
+            return new NumericSummary(null, null, null, 0L);
         }
-        return new NumericSummary(round(statistics.getMin()), round(statistics.getMax()), round(statistics.getAverage()));
+        return new NumericSummary(round(statistics.getMin()), round(statistics.getMax()), round(statistics.getAverage()),
+            statistics.getCount());
     }
 
     /**
@@ -489,8 +596,13 @@ public class TelemetryDataAnalyzer {
     private record DeduplicationResult(List<TimedRecord> records, int duplicateCount) {
     }
 
+    /** 同一份受控查询数据经时间过滤、去重和质量计算后的中间结果。 */
+    private record AnalysisData(List<RealDataEntity> rawRecords, List<TimedRecord> validRecords,
+                                DataQualitySummary quality) {
+    }
+
     /** 单个数值指标的统计摘要。 */
-    private record NumericSummary(Double min, Double max, Double average) {
+    private record NumericSummary(Double min, Double max, Double average, long count) {
     }
 
     /** 单个代码在窗口末尾的活动性与恢复确认时间。 */
