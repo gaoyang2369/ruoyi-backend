@@ -4,14 +4,8 @@ import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.result.CandidateFault;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
-import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
-import org.ruoyi.fault.telemetry.model.CodeOccurrence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
-import org.ruoyi.fault.telemetry.model.OperationStatistics;
-import org.ruoyi.fault.telemetry.model.StatusEvent;
-import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
-import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
@@ -63,22 +57,22 @@ public final class MarkdownOperationReportRenderer {
         StringBuilder out = new StringBuilder();
         out.append("# 设备运行与状态报告\n\n");
         appendUnconfirmedBanner(out, result);
-        out.append("**设备：").append(result.deviceName()).append(" · 逆变器：")
-            .append(blankToNone(result.inverterName())).append(" · 状态：")
-            .append(result.healthStatus().getDisplayName()).append("**\n\n");
-        out.append("分析区间：").append(formatTime(result.requestedStartTime())).append(" ~ ")
-            .append(formatTime(result.requestedEndTime())).append('\n');
-        out.append("最新数据：").append(formatTime(result.telemetry().latestObservedAt())).append('\n');
-        DataQualitySummary quality = result.telemetry().quality();
+        out.append("**设备：").append(result.asset().deviceName()).append(" · 逆变器：")
+            .append(blankToNone(result.asset().inverterName())).append(" · 状态：")
+            .append(result.overallStatus().getDisplayName()).append("**\n\n");
+        out.append("分析区间：").append(formatTime(result.period().windowStart())).append(" ~ ")
+            .append(formatTime(result.period().windowEnd())).append('\n');
+        out.append("最新数据：").append(formatTime(result.period().latestObservedAt())).append('\n');
+        DataQualitySummary quality = result.dataQuality();
         if (quality != null) {
             out.append("数据完整率：").append(percent(quality.completeness())).append('\n');
         }
         appendCodeCards(out, result, true);
-        appendRecommendations(out, "处理建议", result.diagnosis(), narrative);
-        appendConciseMetrics(out, result.telemetry(), metricUnits);
+        appendRecommendations(out, "处理建议", result, narrative);
+        appendConciseMetrics(out, result.metrics(), metricUnits);
         appendConclusionBoundary(out, result.diagnosis());
         out.append("\n---\n\n完整明细（事件时间线、数据质量、证据溯源、报告编号 ")
-            .append(result.reportCode()).append("）请下载运行报告。\n");
+            .append(result.metadata().reportId()).append("）请下载运行报告。\n");
         return out.toString();
     }
 
@@ -96,11 +90,11 @@ public final class MarkdownOperationReportRenderer {
         appendConclusionSection(out, result);
         out.append("\n## 3. 故障与报警信息\n\n");
         appendCodeCards(out, result, false);
-        appendRecommendations(out, "4. 代码说明与处理建议", result.diagnosis(), narrative);
-        appendMetricsSection(out, result.telemetry(), metricUnits);
-        appendQualitySection(out, result.telemetry());
-        appendEventsSection(out, result.telemetry());
-        appendLimitationsSection(out, result.diagnosis());
+        appendRecommendations(out, "4. 代码说明与处理建议", result, narrative);
+        appendMetricsSection(out, result.metrics(), metricUnits);
+        appendQualitySection(out, result);
+        appendEventsSection(out, result.statusTimeline());
+        appendLimitationsSection(out, result.limitations());
         appendEvidenceSection(out, result);
         out.append("\n---\n\n本报告由故障诊断系统自动生成，当前诊断依据为设备故障码与故障知识库，")
             .append("尚未结合温度、电流等趋势模型，结论供运维参考。\n");
@@ -111,11 +105,10 @@ public final class MarkdownOperationReportRenderer {
      * 历史回退或数据不足时，正文首行必须明确“当前状态无法确认”，避免把历史数据当成当前状态。
      */
     private static void appendUnconfirmedBanner(StringBuilder out, OperationReportResult result) {
-        TelemetryQueryResult telemetry = result.telemetry();
-        if (telemetry.fallbackToLatestData()) {
+        if (result.period().fallbackToLatestData()) {
             out.append("当前状态无法确认：请求窗口无数据，以下为最近可用数据窗口（")
-                .append(formatTime(telemetry.startTime())).append(" ~ ")
-                .append(formatTime(telemetry.endTime())).append("）的历史分析。\n\n");
+                .append(formatTime(result.period().analysisWindowStart())).append(" ~ ")
+                .append(formatTime(result.period().analysisWindowEnd())).append("）的历史分析。\n\n");
             return;
         }
         if (result.diagnosis().status() == DiagnosisStatus.DATA_INSUFFICIENT) {
@@ -125,10 +118,10 @@ public final class MarkdownOperationReportRenderer {
 
     /** 故障/报警卡片：标题含代码类型、代码与窗口末尾的恢复状态，明细为采样命中口径。 */
     private static void appendCodeCards(StringBuilder out, OperationReportResult result, boolean headingCards) {
-        TelemetryQueryResult telemetry = result.telemetry();
-        OperationStatistics operation = telemetry.operation();
-        List<CodeOccurrence> faults = operation == null ? List.of() : operation.faultCodeOccurrences();
-        List<CodeOccurrence> alarms = operation == null ? List.of() : operation.alarmCodeOccurrences();
+        List<OperationReportResult.Event> faults = result.events().stream()
+            .filter(event -> event.type() == FaultCodeType.FAULT).toList();
+        List<OperationReportResult.Event> alarms = result.events().stream()
+            .filter(event -> event.type() == FaultCodeType.ALARM).toList();
         if (faults.isEmpty() && alarms.isEmpty()) {
             if (headingCards) {
                 out.append("\n## 故障与报警\n\n窗口内未发现故障码或报警码。\n");
@@ -137,32 +130,28 @@ public final class MarkdownOperationReportRenderer {
             }
         } else {
             Map<String, CandidateFault> candidates = candidateFaultsByCode(result.diagnosis());
-            List<StatusEvent> events = telemetry.statusEvents();
-            List<CodeOccurrence> all = new ArrayList<>(faults);
+            List<OperationReportResult.Event> all = new ArrayList<>(faults);
             all.addAll(alarms);
             for (int index = 0; index < all.size(); index++) {
-                CodeOccurrence occurrence = all.get(index);
+                OperationReportResult.Event occurrence = all.get(index);
                 FaultCodeType type = index < faults.size() ? FaultCodeType.FAULT : FaultCodeType.ALARM;
-                appendCodeCard(out, occurrence, type, candidates, events, headingCards, index == 0);
+                appendCodeCard(out, occurrence, type, candidates, headingCards, index == 0);
             }
             if (faults.isEmpty()) {
                 out.append("\n故障码：未发现 F 类故障码。\n");
             }
         }
-        if (!telemetry.unknownCodes().isEmpty()) {
-            out.append("\n未识别代码：").append(String.join("、", telemetry.unknownCodes()))
+        if (result.diagnosis() != null && !result.diagnosis().unknownCodes().isEmpty()) {
+            out.append("\n未识别代码：").append(String.join("、", result.diagnosis().unknownCodes()))
                 .append("（未升级为故障或报警）。\n");
         }
     }
 
-    private static void appendCodeCard(StringBuilder out, CodeOccurrence occurrence, FaultCodeType type,
-                                       Map<String, CandidateFault> candidates, List<StatusEvent> events,
+    private static void appendCodeCard(StringBuilder out, OperationReportResult.Event occurrence, FaultCodeType type,
+                                       Map<String, CandidateFault> candidates,
                                        boolean headingCard, boolean firstCard) {
         String title = type.term() + " " + occurrence.code();
-        String recovery = codeRecoveryText(occurrence.code(), type, events);
-        if (recovery != null) {
-            title += " · " + recovery;
-        }
+        title += " · " + (occurrence.active() ? "持续中" : "已恢复");
         if (headingCard) {
             out.append("\n## ").append(title).append("\n\n");
         } else {
@@ -171,35 +160,21 @@ public final class MarkdownOperationReportRenderer {
             }
             out.append("**").append(title).append("**\n\n");
         }
-        out.append("- 发生时间：").append(formatTime(occurrence.firstObservedAt())).append(" ~ ")
-            .append(formatTime(occurrence.lastObservedAt())).append('\n');
-        out.append("- 采样命中：").append(occurrence.sampleCount()).append(" 条记录\n");
+        out.append("- 发生时间：").append(formatTime(occurrence.firstSeenAt())).append(" ~ ")
+            .append(formatTime(occurrence.lastSeenAt())).append('\n');
+        out.append("- 采样命中：").append(occurrence.occurrenceCount()).append(" 条记录\n");
         out.append("- 手册匹配：").append(knowledgeStatusText(candidates.get(occurrence.code()))).append('\n');
     }
 
-    /**
-     * 代码在窗口末尾的恢复状态：事件按时间升序且仅在状态变化时产生，
-     * 最后一个事件即代表窗口末尾状态；末尾事件仍携带该代码为“持续中”，否则为“已恢复”。
-     * 无事件时不标注（防御分支：有代码出现就至少有一个事件）。
-     */
-    private static String codeRecoveryText(String code, FaultCodeType type, List<StatusEvent> events) {
-        if (events.isEmpty()) {
-            return null;
-        }
-        StatusEvent last = events.get(events.size() - 1);
-        String activeCode = type == FaultCodeType.ALARM ? last.alarmCode() : last.faultCode();
-        return code.equals(activeCode) ? "持续中" : "已恢复";
-    }
-
     /** 处理建议：优先呈现通过安全校验的模型叙事，失败时回退确定性内容。 */
-    private static void appendRecommendations(StringBuilder out, String title, DiagnosisResult diagnosis,
+    private static void appendRecommendations(StringBuilder out, String title, OperationReportResult result,
                                               String narrative) {
         out.append("\n## ").append(title).append("\n\n");
         if (narrative != null && !narrative.isBlank()) {
             out.append(narrative.trim()).append('\n');
             return;
         }
-        List<CandidateFault> candidates = diagnosis.candidateFaults();
+        List<CandidateFault> candidates = result.diagnosis() == null ? List.of() : result.diagnosis().candidateFaults();
         if (!candidates.isEmpty()) {
             // 知识匹配状态已在代码卡片展示，此处只强调代码类型，避免重复结论
             for (CandidateFault candidate : candidates) {
@@ -208,22 +183,22 @@ public final class MarkdownOperationReportRenderer {
             }
             out.append("知识库内容仅为资料解释，不能替代对本设备实际参数的核对。\n");
         }
-        List<String> recommendations = diagnosis.recommendations();
+        List<OperationReportResult.Recommendation> recommendations = result.recommendations();
         if (recommendations.isEmpty()) {
             out.append("暂无针对本周期的处理建议，请结合后续运行数据持续观察。\n");
             return;
         }
         int index = 0;
-        for (String recommendation : recommendations) {
+        for (OperationReportResult.Recommendation recommendation : recommendations) {
             index++;
-            out.append(index).append(". ").append(recommendation).append('\n');
+            out.append(index).append(". ").append(recommendation.content()).append('\n');
         }
     }
 
     /** 精简版运行摘要：只渲染已配置单位的指标；没有可展示指标时整节省略。 */
-    private static void appendConciseMetrics(StringBuilder out, TelemetryQueryResult telemetry,
+    private static void appendConciseMetrics(StringBuilder out, List<OperationReportResult.Metric> metrics,
                                              Map<String, String> metricUnits) {
-        List<String> lines = metricLines(telemetry, metricUnits, false);
+        List<String> lines = metricLines(metrics, metricUnits, false);
         if (lines.isEmpty()) {
             return;
         }
@@ -245,104 +220,102 @@ public final class MarkdownOperationReportRenderer {
 
     /** 1. 报告基本信息（仅完整版）。 */
     private static void appendMetaSection(StringBuilder out, OperationReportResult result) {
-        TelemetryQueryResult telemetry = result.telemetry();
         out.append("\n## 1. 报告基本信息\n\n");
         out.append("| 项目 | 内容 |\n| --- | --- |\n");
-        out.append("| 报告编号 | ").append(result.reportCode()).append(" |\n");
-        out.append("| 设备 | ").append(result.deviceName()).append(" |\n");
-        out.append("| 逆变器 | ").append(result.inverterName()).append(" |\n");
-        out.append("| 请求窗口 | ").append(formatTime(result.requestedStartTime())).append(" ~ ")
-            .append(formatTime(result.requestedEndTime())).append(" |\n");
-        out.append("| 实际分析窗口 | ").append(formatTime(telemetry.startTime())).append(" ~ ")
-            .append(formatTime(telemetry.endTime()));
-        if (telemetry.fallbackToLatestData()) {
+        out.append("| 报告编号 | ").append(result.metadata().reportId()).append(" |\n");
+        out.append("| 设备 | ").append(result.asset().deviceName()).append(" |\n");
+        out.append("| 逆变器 | ").append(result.asset().inverterName()).append(" |\n");
+        out.append("| 请求窗口 | ").append(formatTime(result.period().windowStart())).append(" ~ ")
+            .append(formatTime(result.period().windowEnd())).append(" |\n");
+        out.append("| 实际分析窗口 | ").append(formatTime(result.period().analysisWindowStart())).append(" ~ ")
+            .append(formatTime(result.period().analysisWindowEnd()));
+        if (result.period().fallbackToLatestData()) {
             out.append("（请求窗口无数据，已回退到最近可用数据窗口）");
         }
         out.append(" |\n");
-        out.append("| 生成时间 | ").append(formatTime(result.generatedAt())).append(" |\n");
-        out.append("| 数据源摘要 | ").append(blankToNone(telemetry.sourceDigest())).append(" |\n");
+        out.append("| 生成时间 | ").append(formatTime(result.metadata().generatedAt())).append(" |\n");
+        out.append("| 数据源摘要 | ").append(blankToNone(result.period().sourceDigest())).append(" |\n");
     }
 
     /** 2. 运行状态结论（仅完整版）；回退/数据不足时首行说明当前状态无法确认。 */
     private static void appendConclusionSection(StringBuilder out, OperationReportResult result) {
         out.append("\n## 2. 运行状态结论\n\n");
         appendUnconfirmedBanner(out, result);
-        out.append("**设备状态：").append(result.healthStatus().getDisplayName()).append("**\n\n");
-        out.append(result.summary()).append('\n');
+        out.append("**设备状态：").append(result.overallStatus().getDisplayName()).append("**\n\n");
+        out.append(result.summary().conclusion()).append('\n');
         if (result.diagnosis().partial()) {
             out.append("\n注意：本次诊断为降级结果，部分步骤未完整执行。\n");
         }
     }
 
     /** 5. 运行摘要（仅完整版）；未配置单位的指标不展示。 */
-    private static void appendMetricsSection(StringBuilder out, TelemetryQueryResult telemetry,
+    private static void appendMetricsSection(StringBuilder out, List<OperationReportResult.Metric> metrics,
                                              Map<String, String> metricUnits) {
         out.append("\n## 5. 运行摘要\n\n");
-        TelemetryStatistics statistics = telemetry.statistics();
-        if (statistics == null || statistics.sampleCount() == 0) {
+        int sampleCount = metrics.stream().map(OperationReportResult.Metric::count)
+            .filter(count -> count != null).findFirst().orElse(0);
+        if (sampleCount == 0) {
             out.append("窗口内无有效运行数据。\n");
             return;
         }
-        List<String> lines = metricLines(telemetry, metricUnits, true);
+        List<String> lines = metricLines(metrics, metricUnits, true);
         if (lines.isEmpty()) {
             out.append("运行指标单位尚未确认，暂不展示。\n");
             return;
         }
-        out.append("有效样本 ").append(statistics.sampleCount()).append(" 条。\n\n");
+        out.append("有效样本 ").append(sampleCount).append(" 条。\n\n");
         for (String line : lines) {
             out.append("- ").append(line).append('\n');
         }
     }
 
-    /** 已配置单位的指标行；withPeak 时附带峰值出现时间。 */
-    private static List<String> metricLines(TelemetryQueryResult telemetry, Map<String, String> metricUnits,
-                                            boolean withPeak) {
-        TelemetryStatistics statistics = telemetry.statistics();
-        if (statistics == null || statistics.sampleCount() == 0 || metricUnits == null || metricUnits.isEmpty()) {
+    /** 已配置单位的指标行；单位继续只来自配置，不从报告数据推断。 */
+    private static List<String> metricLines(List<OperationReportResult.Metric> metrics, Map<String, String> metricUnits,
+                                            boolean includePeakTime) {
+        if (metrics == null || metrics.isEmpty() || metricUnits == null || metricUnits.isEmpty()) {
             return List.of();
         }
         List<String> lines = new ArrayList<>();
-        addRangeLine(lines, metricUnits, METRIC_ACTUAL_POWER, "实际功率",
-            statistics.minActualPower(), statistics.avgActualPower(), statistics.maxActualPower());
-        addRangeLine(lines, metricUnits, METRIC_MOTOR_TEMP, "电机温度",
-            statistics.minMotorTemp(), statistics.avgMotorTemp(), statistics.maxMotorTemp());
-        addRangeLine(lines, metricUnits, METRIC_INVERTER_TEMP, "变频器温度",
-            statistics.minInverterTemp(), statistics.avgInverterTemp(), statistics.maxInverterTemp());
-        addMaxLine(lines, metricUnits, METRIC_MOTOR_LOAD_RATE, "电机负载率", statistics.maxMotorLoadRate());
-        addMaxLine(lines, metricUnits, METRIC_INVERTER_LOAD_RATE, "变频器负载率", statistics.maxInverterLoadRate());
-        if (withPeak) {
-            addPeakLine(lines, telemetry.operation(), metricUnits);
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_ACTUAL_POWER), "实际功率");
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_MOTOR_TEMP), "电机温度");
+        addRangeLine(lines, metricUnits, metricOf(metrics, METRIC_INVERTER_TEMP), "变频器温度");
+        addMaxLine(lines, metricUnits, metricOf(metrics, METRIC_MOTOR_LOAD_RATE), "电机负载率");
+        addMaxLine(lines, metricUnits, metricOf(metrics, METRIC_INVERTER_LOAD_RATE), "变频器负载率");
+        if (includePeakTime) {
+            addPeakLine(lines, metricOf(metrics, METRIC_MOTOR_TEMP), metricOf(metrics, METRIC_MOTOR_LOAD_RATE), metricUnits);
         }
         return List.copyOf(lines);
     }
 
-    private static void addRangeLine(List<String> lines, Map<String, String> metricUnits, String key,
-                                     String label, Double min, Double avg, Double max) {
-        String unit = unitOf(metricUnits, key);
-        if (unit == null) {
-            return;
-        }
-        lines.add(label + "（" + unit + "）：最低 " + number(min) + "，平均 " + number(avg)
-            + "，最高 " + number(max));
+    private static OperationReportResult.Metric metricOf(List<OperationReportResult.Metric> metrics, String name) {
+        return metrics.stream().filter(metric -> name.equals(metric.metricName())).findFirst().orElse(null);
     }
 
-    private static void addMaxLine(List<String> lines, Map<String, String> metricUnits, String key,
-                                   String label, Double max) {
-        String unit = unitOf(metricUnits, key);
-        if (unit == null) {
+    private static void addRangeLine(List<String> lines, Map<String, String> metricUnits,
+                                     OperationReportResult.Metric metric, String label) {
+        if (metric == null || unitOf(metricUnits, metric.metricName()) == null) {
             return;
         }
-        lines.add(label + "（" + unit + "）：最高 " + number(max));
+        String unit = unitOf(metricUnits, metric.metricName());
+        lines.add(label + "（" + unit + "）：最低 " + number(metric.minimum()) + "，平均 " + number(metric.average())
+            + "，最高 " + number(metric.maximum()));
     }
 
-    private static void addPeakLine(List<String> lines, OperationStatistics operation,
-                                    Map<String, String> metricUnits) {
-        if (operation == null || lines.isEmpty()) {
+    private static void addMaxLine(List<String> lines, Map<String, String> metricUnits,
+                                   OperationReportResult.Metric metric, String label) {
+        if (metric == null || unitOf(metricUnits, metric.metricName()) == null) {
             return;
         }
-        LocalDateTime tempAt = unitOf(metricUnits, METRIC_MOTOR_TEMP) != null ? operation.maxMotorTempAt() : null;
-        LocalDateTime loadAt = unitOf(metricUnits, METRIC_MOTOR_LOAD_RATE) != null
-            ? operation.maxMotorLoadRateAt() : null;
+        String unit = unitOf(metricUnits, metric.metricName());
+        lines.add(label + "（" + unit + "）：最高 " + number(metric.maximum()));
+    }
+
+    private static void addPeakLine(List<String> lines, OperationReportResult.Metric temperature,
+                                    OperationReportResult.Metric loadRate, Map<String, String> metricUnits) {
+        LocalDateTime tempAt = temperature != null && unitOf(metricUnits, METRIC_MOTOR_TEMP) != null
+            ? temperature.peakAt() : null;
+        LocalDateTime loadAt = loadRate != null && unitOf(metricUnits, METRIC_MOTOR_LOAD_RATE) != null
+            ? loadRate.peakAt() : null;
         if (tempAt == null && loadAt == null) {
             return;
         }
@@ -360,9 +333,9 @@ public final class MarkdownOperationReportRenderer {
     }
 
     /** 6. 数据质量（仅完整版）。 */
-    private static void appendQualitySection(StringBuilder out, TelemetryQueryResult telemetry) {
+    private static void appendQualitySection(StringBuilder out, OperationReportResult result) {
         out.append("\n## 6. 数据质量\n\n");
-        DataQualitySummary quality = telemetry.quality();
+        DataQualitySummary quality = result.dataQuality();
         if (quality == null) {
             out.append("无数据质量摘要。\n");
         } else {
@@ -375,18 +348,11 @@ public final class MarkdownOperationReportRenderer {
             out.append("| 数据完整率 | ").append(percent(quality.completeness())).append(" |\n");
             out.append("| 数据是否充足 | ").append(quality.sufficient() ? "是" : "否").append(" |\n");
         }
-        if (!telemetry.codeNormalizationNotes().isEmpty()) {
-            out.append("\n数据质量说明：\n");
-            for (String note : telemetry.codeNormalizationNotes()) {
-                out.append("- ").append(note).append('\n');
-            }
-        }
     }
 
     /** 7. 状态与事件时间线（仅完整版）；状态值按当前数据契约翻译，不直接展示原始码。 */
-    private static void appendEventsSection(StringBuilder out, TelemetryQueryResult telemetry) {
+    private static void appendEventsSection(StringBuilder out, List<OperationReportResult.StatusTimelineEvent> events) {
         out.append("\n## 7. 状态与事件时间线\n\n");
-        List<StatusEvent> events = telemetry.statusEvents();
         if (events.isEmpty()) {
             out.append("窗口内未记录到状态变化事件。\n");
             return;
@@ -394,7 +360,7 @@ public final class MarkdownOperationReportRenderer {
         out.append("| 时间 | 状态 | 故障码 | 报警码 |\n| --- | --- | --- | --- |\n");
         int rendered = Math.min(events.size(), MAX_EVENT_ROWS);
         for (int index = 0; index < rendered; index++) {
-            StatusEvent event = events.get(index);
+            OperationReportResult.StatusTimelineEvent event = events.get(index);
             out.append("| ").append(formatTime(event.observedAt())).append(" | ")
                 .append(statusText(event.status())).append(" | ")
                 .append(blankToNone(event.faultCode())).append(" | ")
@@ -423,9 +389,9 @@ public final class MarkdownOperationReportRenderer {
     }
 
     /** 8. 限制说明（仅完整版）。 */
-    private static void appendLimitationsSection(StringBuilder out, DiagnosisResult diagnosis) {
+    private static void appendLimitationsSection(StringBuilder out, List<String> reportLimitations) {
         out.append("\n## 8. 限制说明\n\n");
-        Set<String> limitations = new LinkedHashSet<>(diagnosis.limitations());
+        Set<String> limitations = new LinkedHashSet<>(reportLimitations);
         if (limitations.isEmpty()) {
             out.append("- 无\n");
             return;
@@ -438,21 +404,21 @@ public final class MarkdownOperationReportRenderer {
     /** 9. 证据与溯源（仅完整版）；证据类型使用中文名，title 与类型名相同时不重复。 */
     private static void appendEvidenceSection(StringBuilder out, OperationReportResult result) {
         out.append("\n## 9. 证据与溯源\n\n");
-        List<EvidenceReference> evidence = result.diagnosis().evidenceIndex().stream()
+        List<OperationReportResult.Evidence> evidence = result.evidence().stream()
             .filter(reference -> reference != null && reference.userVisible()).toList();
         if (evidence.isEmpty()) {
             out.append("本次没有可引用的持久化证据。\n");
             return;
         }
-        for (EvidenceReference reference : evidence) {
+        for (OperationReportResult.Evidence reference : evidence) {
             appendEvidenceLine(out, reference);
         }
         out.append("\n诊断过程已按证据链持久化，可凭上述编号在系统中核验。\n");
     }
 
-    private static void appendEvidenceLine(StringBuilder out, EvidenceReference reference) {
-        String typeName = reference.evidenceType() == null ? null : reference.evidenceType().getDisplayName();
-        String title = reference.title();
+    private static void appendEvidenceLine(StringBuilder out, OperationReportResult.Evidence reference) {
+        String typeName = reference.type() == null ? null : reference.type().getDisplayName();
+        String title = reference.source();
         boolean hasTitle = title != null && !title.isBlank();
         boolean titleDistinct = hasTitle && typeName != null && !title.equals(typeName);
         out.append("- ").append(blankToNone(reference.evidenceCode())).append(' ');
@@ -461,14 +427,17 @@ public final class MarkdownOperationReportRenderer {
         } else {
             out.append(blankToNone(typeName));
         }
-        if (reference.summary() != null && !reference.summary().isBlank()) {
-            out.append(titleDistinct ? "，" : "：").append(reference.summary());
+        if (reference.content() != null && !reference.content().isBlank()) {
+            out.append(titleDistinct ? "，" : "：").append(reference.content());
         }
         out.append('\n');
     }
 
     private static Map<String, CandidateFault> candidateFaultsByCode(DiagnosisResult diagnosis) {
         Map<String, CandidateFault> candidates = new LinkedHashMap<>();
+        if (diagnosis == null) {
+            return candidates;
+        }
         for (CandidateFault candidate : diagnosis.candidateFaults()) {
             candidates.putIfAbsent(candidate.faultCode(), candidate);
         }

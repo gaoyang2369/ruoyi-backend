@@ -64,8 +64,8 @@ public class OperationReportController extends BaseController {
         String markdown = MarkdownOperationReportRenderer.renderFull(
             result, operationReportService.narrate(bo.getAgentId(), result),
             faultDiagnosisProperties.getMetricUnits());
-        String filename = "运行报告_" + result.deviceName() + "_"
-            + FILENAME_TIME_FORMATTER.format(result.generatedAt()) + ".md";
+        String filename = "运行报告_" + result.asset().deviceName() + "_"
+            + FILENAME_TIME_FORMATTER.format(result.metadata().generatedAt()) + ".md";
         response.setContentType("text/markdown; charset=utf-8");
         FileUtils.setAttachmentResponseHeader(response, filename);
         response.getOutputStream().write(markdown.getBytes(StandardCharsets.UTF_8));
@@ -74,16 +74,16 @@ public class OperationReportController extends BaseController {
 
     private static OperationReportVo toVo(OperationReportResult result, String markdown) {
         OperationReportVo vo = new OperationReportVo();
-        vo.setReportCode(result.reportCode());
-        vo.setDeviceName(result.deviceName());
-        vo.setInverterName(result.inverterName());
-        vo.setHealthStatus(result.healthStatus().name());
-        vo.setSummary(result.summary());
+        vo.setReportCode(result.metadata().reportId());
+        vo.setDeviceName(result.asset().deviceName());
+        vo.setInverterName(result.asset().inverterName());
+        vo.setHealthStatus(result.overallStatus().name());
+        vo.setSummary(result.summary().conclusion());
         vo.setMarkdown(markdown);
-        vo.setGeneratedAt(result.generatedAt());
-        vo.setRequestedStartTime(result.requestedStartTime());
-        vo.setRequestedEndTime(result.requestedEndTime());
-        vo.setFallbackToLatestData(result.telemetry().fallbackToLatestData());
+        vo.setGeneratedAt(result.metadata().generatedAt());
+        vo.setRequestedStartTime(result.period().windowStart());
+        vo.setRequestedEndTime(result.period().windowEnd());
+        vo.setFallbackToLatestData(result.period().fallbackToLatestData());
         return vo;
     }
 

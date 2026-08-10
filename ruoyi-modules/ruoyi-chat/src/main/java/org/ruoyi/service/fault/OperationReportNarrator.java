@@ -8,10 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.fault.report.OperationReportResult;
-import org.ruoyi.fault.telemetry.model.CodeOccurrence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
-import org.ruoyi.fault.telemetry.model.OperationStatistics;
-import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
 import org.springframework.stereotype.Service;
 
@@ -64,15 +61,15 @@ public class OperationReportNarrator {
                     + "\n报告事实：\n" + facts(report, execution)))).aiMessage().text();
         } catch (RuntimeException ex) {
             log.warn("运行报告叙事模型调用失败，回退确定性内容: reportCode={}, error={}",
-                report.reportCode(), ex.toString());
+                report.metadata().reportId(), ex.toString());
             return null;
         }
         if (StringUtils.isBlank(body)) {
-            log.warn("运行报告叙事模型返回空，回退确定性内容: reportCode={}", report.reportCode());
+            log.warn("运行报告叙事模型返回空，回退确定性内容: reportCode={}", report.metadata().reportId());
             return null;
         }
         if (!faultAnswerSafetyValidator.valid(body, execution, true)) {
-            log.warn("运行报告叙事未通过安全校验，回退确定性内容: reportCode={}", report.reportCode());
+            log.warn("运行报告叙事未通过安全校验，回退确定性内容: reportCode={}", report.metadata().reportId());
             return null;
         }
         return body.trim();
@@ -80,39 +77,39 @@ public class OperationReportNarrator {
 
     /** 报告事实文本：全部取自结构化结果，知识片段沿用诊断回答的截断口径。 */
     private static String facts(OperationReportResult report, FaultExecutionResult execution) {
-        TelemetryQueryResult telemetry = report.telemetry();
         StringBuilder out = new StringBuilder();
-        out.append("设备=").append(report.deviceName()).append("；逆变器=").append(report.inverterName()).append('\n');
-        out.append("请求窗口=").append(report.requestedStartTime()).append(" 至 ").append(report.requestedEndTime())
-            .append("；实际分析窗口=").append(telemetry.startTime()).append(" 至 ").append(telemetry.endTime()).append('\n');
-        out.append("历史回退=").append(telemetry.fallbackToLatestData())
-            .append("；最后观测时间=").append(telemetry.latestObservedAt()).append('\n');
-        out.append("设备状态=").append(report.healthStatus().getDisplayName()).append('\n');
-        DataQualitySummary quality = telemetry.quality();
+        out.append("设备=").append(report.asset().deviceName()).append("；逆变器=")
+            .append(report.asset().inverterName()).append('\n');
+        out.append("请求窗口=").append(report.period().windowStart()).append(" 至 ").append(report.period().windowEnd())
+            .append("；实际分析窗口=").append(report.period().analysisWindowStart()).append(" 至 ")
+            .append(report.period().analysisWindowEnd()).append('\n');
+        out.append("历史回退=").append(report.period().fallbackToLatestData())
+            .append("；最后观测时间=").append(report.period().latestObservedAt()).append('\n');
+        out.append("设备状态=").append(report.overallStatus().getDisplayName()).append('\n');
+        DataQualitySummary quality = report.dataQuality();
         if (quality != null) {
             out.append("数据完整率=").append(quality.completeness()).append("；有效样本=")
                 .append(quality.validRecordCount()).append('\n');
         }
         // 运行指标单位未确认，不提供给模型，避免叙事引用无单位数值；指标由报告确定性渲染。
-        OperationStatistics operation = telemetry.operation();
-        if (operation != null) {
-            appendOccurrences(out, "故障码出现", operation.faultCodeOccurrences());
-            appendOccurrences(out, "报警码出现", operation.alarmCodeOccurrences());
-        }
+        appendOccurrences(out, "故障码出现", report.events(), org.ruoyi.fault.domain.code.FaultCodeType.FAULT);
+        appendOccurrences(out, "报警码出现", report.events(), org.ruoyi.fault.domain.code.FaultCodeType.ALARM);
         out.append("证据编号=").append(execution.allowedEvidenceCodes()).append('\n');
         FaultAnswerGenerator.appendBoundedKnowledge(out, execution);
         return out.toString();
     }
 
-    private static void appendOccurrences(StringBuilder out, String label, List<CodeOccurrence> occurrences) {
+    private static void appendOccurrences(StringBuilder out, String label, List<OperationReportResult.Event> events,
+                                          org.ruoyi.fault.domain.code.FaultCodeType type) {
+        List<OperationReportResult.Event> occurrences = events.stream().filter(event -> event.type() == type).toList();
         if (occurrences.isEmpty()) {
             return;
         }
         out.append(label).append("=");
-        for (CodeOccurrence occurrence : occurrences) {
-            out.append(occurrence.code()).append("(采样命中=").append(occurrence.sampleCount())
-                .append("条记录, 首次=").append(occurrence.firstObservedAt())
-                .append(", 最近=").append(occurrence.lastObservedAt()).append(") ");
+        for (OperationReportResult.Event occurrence : occurrences) {
+            out.append(occurrence.code()).append("(采样命中=").append(occurrence.occurrenceCount())
+                .append("条记录, 首次=").append(occurrence.firstSeenAt())
+                .append(", 最近=").append(occurrence.lastSeenAt()).append(") ");
         }
         out.append('\n');
     }

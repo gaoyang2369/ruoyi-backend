@@ -45,7 +45,7 @@ public class OperationReportOrchestrator {
             command.deviceName(), command.inverterName(), command.startTime(), command.endTime());
         DiagnosisResult diagnosis = faultDiagnosisOrchestrator.diagnose(command, telemetry);
         ReportHealthStatus healthStatus = ReportHealthStatus.fromDiagnosisStatus(diagnosis.status());
-        return new OperationReportResult(
+        return OperationReportResult.fromSources(
             "RP-" + IdUtil.getSnowflakeNextId(),
             command.deviceName(),
             command.inverterName(),
@@ -61,8 +61,8 @@ public class OperationReportOrchestrator {
     /**
      * 运行结论段落：先说发生了什么，再给数据质量与诊断边界，全部取自结构化事实。
      */
-    private String buildSummary(ReportHealthStatus healthStatus, TelemetryQueryResult telemetry,
-                                DiagnosisResult diagnosis) {
+    private OperationReportResult.Summary buildSummary(ReportHealthStatus healthStatus, TelemetryQueryResult telemetry,
+                                                        DiagnosisResult diagnosis) {
         StringBuilder out = new StringBuilder();
         out.append("报告周期内设备状态：").append(healthStatus.getDisplayName()).append("。");
         // 摘要只点状态与代码清单；出现次数、首末时间等明细由报告第 6 节呈现，避免重复。
@@ -89,7 +89,8 @@ public class OperationReportOrchestrator {
         if (diagnosis.partial()) {
             out.append("本次诊断存在降级，请结合限制说明谨慎使用。");
         }
-        return out.toString();
+        return new OperationReportResult.Summary(out.toString(), diagnosis.faultCodes(), diagnosis.alarmCodes(),
+            !telemetry.fallbackToLatestData() && diagnosis.status() != org.ruoyi.fault.domain.enums.DiagnosisStatus.DATA_INSUFFICIENT);
     }
 
     private static void appendCodeSentence(StringBuilder out, String prefix, List<String> codes) {
