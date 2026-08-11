@@ -18,6 +18,7 @@ import org.ruoyi.fault.controller.dto.TelemetryStatisticsRequest;
 import org.ruoyi.fault.controller.dto.TelemetrySeriesRequest;
 import org.ruoyi.fault.diagnosis.FaultDiagnosisOrchestrator;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
+import org.ruoyi.fault.report.OperationReportOrchestrator;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 
 import java.time.LocalDateTime;
@@ -40,6 +41,8 @@ class FaultToolControllerTest {
     private FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     @Mock
     private FaultDiagnosisOrchestrator faultDiagnosisOrchestrator;
+    @Mock
+    private OperationReportOrchestrator operationReportOrchestrator;
 
     private FaultToolController controller;
 
@@ -49,7 +52,7 @@ class FaultToolControllerTest {
         properties.setTimezone("Asia/Shanghai");
         properties.setDefaultWindowMinutes(30);
         controller = new FaultToolController(telemetryQueryService, faultCodeKnowledgeQueryService,
-            faultDiagnosisOrchestrator, properties);
+            faultDiagnosisOrchestrator, operationReportOrchestrator, properties);
     }
 
     @Test
@@ -159,6 +162,28 @@ class FaultToolControllerTest {
         verify(telemetryQueryService).resolveInverterName("device");
         verify(faultDiagnosisOrchestrator).diagnose(captor.capture());
         assertEquals("resolved-inverter", captor.getValue().inverterName());
+    }
+
+    @Test
+    void reportReusesDiagnosisRequestMappingAndDelegatesToReportOrchestrator() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 9, 10, 0);
+        LocalDateTime end = start.plusMinutes(30);
+        FaultDiagnosisContextRequest context = new FaultDiagnosisContextRequest(
+            1L, 2L, 3L, "tenant", "report-request-1");
+
+        controller.report(new FaultDiagnosisRequest(
+            "device", "inverter", start, end, null, "stopped", List.of(7L), context));
+
+        ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
+        verify(operationReportOrchestrator).generate(captor.capture());
+        DiagnosisCommand command = captor.getValue();
+        assertEquals("device", command.deviceName());
+        assertEquals("inverter", command.inverterName());
+        assertEquals(start, command.startTime());
+        assertEquals(end, command.endTime());
+        assertEquals("stopped", command.symptom());
+        assertEquals(List.of(7L), command.knowledgeBaseIds());
+        assertEquals("report-request-1", command.context().requestId());
     }
 
     @Test

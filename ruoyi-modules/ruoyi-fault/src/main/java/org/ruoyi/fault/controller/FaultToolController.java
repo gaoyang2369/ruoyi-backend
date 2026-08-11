@@ -16,6 +16,8 @@ import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
+import org.ruoyi.fault.report.OperationReportOrchestrator;
+import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.ruoyi.fault.telemetry.model.TelemetrySeriesResult;
@@ -43,6 +45,7 @@ public class FaultToolController {
     private final TelemetryQueryService telemetryQueryService;
     private final FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     private final FaultDiagnosisOrchestrator faultDiagnosisOrchestrator;
+    private final OperationReportOrchestrator operationReportOrchestrator;
     private final FaultDiagnosisProperties faultDiagnosisProperties;
 
     @PostMapping("/status")
@@ -64,6 +67,16 @@ public class FaultToolController {
     @PostMapping("/diagnose")
     public R<DiagnosisResult> diagnose(@RequestBody FaultDiagnosisRequest request) {
         DiagnosisResult result = faultDiagnosisOrchestrator.diagnose(buildDiagnosisCommand(request));
+        return R.ok(result);
+    }
+
+    /**
+     * 生成 Report V2.1 结构化结果，供 Hermes 等内部调用方在后续 Report API 前复用。
+     * 请求模型与诊断接口一致，报告编排内部只查询一次遥测并将同一快照用于诊断。
+     */
+    @PostMapping("/report")
+    public R<OperationReportResult> report(@RequestBody FaultDiagnosisRequest request) {
+        OperationReportResult result = operationReportOrchestrator.generate(buildDiagnosisCommand(request));
         return R.ok(result);
     }
 
