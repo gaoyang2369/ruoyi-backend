@@ -32,6 +32,9 @@ import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.vector.VectorStoreService;
+import org.ruoyi.websocket.chat.sync.ChatSyncEvent;
+import org.ruoyi.websocket.chat.sync.ChatSyncEventPublisher;
+import org.ruoyi.websocket.chat.sync.ChatSyncEventType;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.env.Environment;
@@ -40,6 +43,7 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 
 import java.util.List;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -79,6 +83,7 @@ class ChatServiceFacadeRoutingTest {
     @Mock private LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
     @Mock private HermesChatClient hermesChatClient;
     @Mock private HermesStream hermesStream;
+    @Mock private ChatSyncEventPublisher chatSyncEventPublisher;
 
     @AfterEach
     void clearThreadContext() {
@@ -111,6 +116,11 @@ class ChatServiceFacadeRoutingTest {
         assertEquals(List.of("system", "user", "assistant", "user"),
             messages.getValue().stream().map(HermesChatClient.HermesMessage::role).toList());
         assertEquals("user", messages.getValue().get(messages.getValue().size() - 1).role());
+    }
+
+    @Test
+    void chatRequestDefaultsToWebSource() {
+        assertEquals("WEB", new ChatRequest().getSource());
     }
 
     @Test
@@ -199,6 +209,40 @@ class ChatServiceFacadeRoutingTest {
     }
 
     @Test
+    void voiceFaultDiagnosisPublishesSessionSyncEventsWithoutChangingHermesFlow() {
+        ChatServiceFacade facade = facade();
+        ChatRequest request = request(2L, "请诊断设备");
+        request.setSource("VOICE");
+        request.setClientRequestId("voice-request-1");
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20)).thenReturn(List.of());
+        when(hermesChatClient.open(any())).thenReturn(hermesStream);
+        when(hermesStream.consume(any())).thenAnswer(invocation -> {
+            HermesChatClient.HermesStreamListener listener = invocation.getArgument(0);
+            listener.onToolProgress("tool running");
+            listener.onContent("诊断结果");
+            return new HermesChatResult("诊断结果");
+        });
+
+        facade.handleSpecialChatModes(request, faultAgent(), "tenant-a");
+
+        ArgumentCaptor<ChatSyncEvent> events = ArgumentCaptor.forClass(ChatSyncEvent.class);
+        verify(chatSyncEventPublisher, timeout(1_000).times(4)).publish(events.capture());
+        assertEquals(List.of(
+            ChatSyncEventType.USER_MESSAGE,
+            ChatSyncEventType.TOOL_PROGRESS,
+            ChatSyncEventType.ASSISTANT_DELTA,
+            ChatSyncEventType.ASSISTANT_DONE),
+            events.getAllValues().stream().map(ChatSyncEvent::type).toList());
+        assertEquals(Arrays.asList("请诊断设备", "tool running", "诊断结果", null),
+            events.getAllValues().stream().map(ChatSyncEvent::content).toList());
+        assertEquals("COMPLETED", events.getAllValues().get(3).status());
+        assertEquals(List.of("voice-request-1", "voice-request-1", "voice-request-1", "voice-request-1"),
+            events.getAllValues().stream().map(ChatSyncEvent::clientRequestId).toList());
+        verify(hermesChatClient).open(any());
+    }
+
+    @Test
     void generalChatDoesNotInvokeFaultDiagnosisService() {
         ChatServiceFacade facade = facade();
         AgentVo generalAgent = faultAgent();
@@ -247,7 +291,8 @@ class ChatServiceFacadeRoutingTest {
     private ChatServiceFacade facade() {
         return new ChatServiceFacade(chatModelService, chatServiceFactory, knowledgeInfoService, vectorStoreService,
             knowledgeRetrievalService, sseEmitterManager, chatMessageService, workFlowStarterService,
-            toolProviderFactory, agentService, langChain4jMcpToolProviderService, hermesChatClient);
+            toolProviderFactory, agentService, langChain4jMcpToolProviderService, hermesChatClient,
+            chatSyncEventPublisher);
     }
 
     private static ChatRequest request() {

@@ -1,6 +1,8 @@
 package org.ruoyi.websocket.chat;
 
 import lombok.RequiredArgsConstructor;
+import org.ruoyi.websocket.chat.sync.ChatSyncHandshakeInterceptor;
+import org.ruoyi.websocket.chat.sync.ChatSyncWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -22,12 +24,18 @@ public class MpChatWebSocketConfig {
 
     private final MpChatWebSocketHandler mpChatWebSocketHandler;
     private final MpChatHandshakeInterceptor mpChatHandshakeInterceptor;
+    private final ChatSyncWebSocketHandler chatSyncWebSocketHandler;
+    private final ChatSyncHandshakeInterceptor chatSyncHandshakeInterceptor;
 
     @Bean
     public WebSocketConfigurer mpChatWebSocketConfigurer() {
-        return registry -> registry
-            .addHandler(mpChatWebSocketHandler, "/chat/ws")
-            .addInterceptors(mpChatHandshakeInterceptor)
-            .setAllowedOrigins("*");
+        return registry -> {
+            registry.addHandler(mpChatWebSocketHandler, "/chat/ws")
+                .addInterceptors(mpChatHandshakeInterceptor)
+                .setAllowedOrigins("*");
+            registry.addHandler(chatSyncWebSocketHandler, "/chat/sync/ws")
+                .addInterceptors(chatSyncHandshakeInterceptor)
+                .setAllowedOrigins("*");
+        };
     }
 }

@@ -78,6 +78,8 @@ import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
 import org.ruoyi.service.vector.VectorStoreService;
+import org.ruoyi.websocket.chat.sync.ChatSyncEvent;
+import org.ruoyi.websocket.chat.sync.ChatSyncEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -127,6 +129,9 @@ public class ChatServiceFacade implements IChatService {
     private final LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
 
     private final HermesChatClient hermesChatClient;
+
+    /** 语音请求到 Web Chat 的旁路同步；不参与模型调用或 SSE 生命周期。 */
+    private final ChatSyncEventPublisher chatSyncEventPublisher;
 
     /**
      * 内存实例缓存，避免同一会话重复创建
@@ -212,6 +217,8 @@ public class ChatServiceFacade implements IChatService {
     private void saveUserMessage(ChatRequest chatRequest) {
         chatMessageService.saveChatMessage(chatRequest.getUserId(), chatRequest.getSessionId(), chatRequest.getContent(),
             RoleType.USER.getName(), chatRequest.getModel());
+        publishVoiceSync(chatRequest, ChatSyncEvent.userMessage(
+            chatRequest.getSessionId(), chatRequest.getClientRequestId(), chatRequest.getContent()));
     }
 
     /** Only fault-diagnosis agents use Hermes' fault model and ruoyi_fault tool. */
@@ -250,6 +257,8 @@ public class ChatServiceFacade implements IChatService {
         } catch (HermesChatException e) {
             SseMessageUtils.sendError(userId, e.getMessage());
             SseMessageUtils.sendDone(userId);
+            publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));
             SseMessageUtils.completeConnection(userId, tokenValue);
             return chatRequest.getEmitter();
         }
@@ -264,6 +273,8 @@ public class ChatServiceFacade implements IChatService {
                     @Override
                     public void onContent(String content) {
                         SseMessageUtils.sendContent(userId, content);
+                        publishVoiceSync(chatRequest, ChatSyncEvent.assistantDelta(
+                            chatRequest.getSessionId(), chatRequest.getClientRequestId(), content));
                     }
 
                     @Override
@@ -271,6 +282,8 @@ public class ChatServiceFacade implements IChatService {
                         // Preserve the project's established structured tool event and never append it to assistant text.
                         SseMessageUtils.sendEvent(userId, org.ruoyi.common.sse.dto.SseEventDto
                             .mcpTool("ruoyi_fault", "running", progress));
+                        publishVoiceSync(chatRequest, ChatSyncEvent.toolProgress(
+                            chatRequest.getSessionId(), chatRequest.getClientRequestId(), progress));
                     }
                 }).content();
                 completedNormally.set(true);
@@ -279,15 +292,23 @@ public class ChatServiceFacade implements IChatService {
                         RoleType.ASSISTANT.getName(), chatRequest.getModel());
                 }
                 SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "COMPLETED"));
             } catch (HermesChatCancelledException ignored) {
                 // The downstream SSE connection has gone away, so there is no response to forward or persist.
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "CANCELLED"));
             } catch (ServiceException e) {
                 SseMessageUtils.sendError(userId, e.getMessage());
                 SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));
             } catch (Exception e) {
                 log.error("Hermes 故障诊断执行失败", e);
                 SseMessageUtils.sendError(userId, "Hermes 服务调用失败，请稍后重试");
                 SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));
             } finally {
                 SseMessageUtils.completeConnection(userId, tokenValue);
             }
@@ -298,6 +319,12 @@ public class ChatServiceFacade implements IChatService {
     private static void cancelHermesStream(HermesStream stream, java.util.concurrent.atomic.AtomicBoolean completedNormally) {
         if (!completedNormally.get()) {
             stream.cancel();
+        }
+    }
+
+    private void publishVoiceSync(ChatRequest chatRequest, ChatSyncEvent event) {
+        if ("VOICE".equalsIgnoreCase(chatRequest.getSource())) {
+            chatSyncEventPublisher.publish(event);
         }
     }
 

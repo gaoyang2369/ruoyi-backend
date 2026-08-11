@@ -22,6 +22,16 @@ import java.util.List;
 public class ChatRequest {
 
     /**
+     * 请求来源。未传时按普通 Web 对话处理；VOICE 请求会额外向同会话的同步 WebSocket 广播事件。
+     */
+    private String source = "WEB";
+
+    /**
+     * 客户端生成的请求标识，用于把同步事件关联到一次语音请求。
+     */
+    private String clientRequestId;
+
+    /**
      * 模型名称。
      * 智能体模式下可缺省：传 agentId 时后端按智能体绑定的模型解析，此字段仅作回退。
      */
