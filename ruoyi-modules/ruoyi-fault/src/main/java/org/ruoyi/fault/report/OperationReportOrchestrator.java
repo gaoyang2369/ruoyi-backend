@@ -46,7 +46,7 @@ public class OperationReportOrchestrator {
             command.deviceName(), command.inverterName(), command.startTime(), command.endTime());
         TelemetryQueryResult telemetry = reportSnapshot.telemetry();
         DiagnosisResult diagnosis = faultDiagnosisOrchestrator.diagnose(command, telemetry);
-        ReportHealthStatus healthStatus = ReportHealthStatus.fromDiagnosisStatus(diagnosis.status());
+        ReportHealthStatus periodStatus = ReportHealthStatus.fromDiagnosisStatus(diagnosis.status());
         return OperationReportResult.fromSources(
             "RP-" + IdUtil.getSnowflakeNextId(),
             command.deviceName(),
@@ -54,8 +54,8 @@ public class OperationReportOrchestrator {
             command.startTime(),
             command.endTime(),
             LocalDateTime.now(ZoneId.of(properties.getTimezone())),
-            healthStatus,
-            buildSummary(healthStatus, telemetry, diagnosis),
+            periodStatus,
+            buildSummary(periodStatus, telemetry, diagnosis),
             telemetry,
             reportSnapshot.statistics(),
             reportSnapshot.series(),
@@ -65,17 +65,17 @@ public class OperationReportOrchestrator {
     /**
      * 运行结论段落：先说发生了什么，再给数据质量与诊断边界，全部取自结构化事实。
      */
-    private OperationReportResult.Summary buildSummary(ReportHealthStatus healthStatus, TelemetryQueryResult telemetry,
+    private OperationReportResult.Summary buildSummary(ReportHealthStatus periodStatus, TelemetryQueryResult telemetry,
                                                         DiagnosisResult diagnosis) {
         StringBuilder out = new StringBuilder();
-        out.append("报告周期内设备状态：").append(healthStatus.getDisplayName()).append("。");
-        // 摘要只点状态与代码清单；出现次数、首末时间等明细由报告第 6 节呈现，避免重复。
-        switch (healthStatus) {
+        out.append("报告周期内设备状态：").append(periodStatus.getDisplayName()).append("。");
+        // 摘要只点状态与代码清单；采样命中、首末时间等明细由报告第 3 节呈现，避免重复。
+        switch (periodStatus) {
             case FAULT -> appendCodeSentence(out, "检测到故障码", diagnosis.faultCodes());
             case ATTENTION -> appendCodeSentence(out, "存在报警码", diagnosis.alarmCodes());
             // 只陈述未发现显式代码，不扩大为“设备完全健康”
-            case NORMAL -> out.append("窗口内未发现显式故障码或报警码。");
-            case UNKNOWN -> out.append("无数据或数据质量不足，无法确认设备状态。");
+            case NORMAL -> out.append("有效数据中未观测到显式故障码或报警码。");
+            case UNKNOWN -> out.append("有效数据中未观测到显式故障码或报警码，但数据不足，无法确认整个周期不存在故障或报警。");
         }
         DataQualitySummary quality = telemetry.quality();
         if (quality != null) {

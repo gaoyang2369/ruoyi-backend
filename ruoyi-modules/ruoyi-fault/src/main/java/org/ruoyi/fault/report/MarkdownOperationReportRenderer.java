@@ -1,7 +1,6 @@
 package org.ruoyi.fault.report;
 
 import org.ruoyi.fault.domain.code.FaultCodeType;
-import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.result.CandidateFault;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
@@ -62,7 +61,7 @@ public final class MarkdownOperationReportRenderer {
         appendUnconfirmedBanner(out, result);
         out.append("**设备：").append(result.asset().deviceName()).append(" · 逆变器：")
             .append(blankToNone(result.asset().inverterName())).append(" · 状态：")
-            .append(result.overallStatus().getDisplayName()).append("**\n\n");
+            .append(result.currentStatus().getDisplayName()).append("**\n\n");
         out.append("分析区间：").append(formatTime(result.period().windowStart())).append(" ~ ")
             .append(formatTime(result.period().windowEnd())).append('\n');
         out.append("最新数据：").append(formatTime(result.period().latestObservedAt())).append('\n');
@@ -73,7 +72,7 @@ public final class MarkdownOperationReportRenderer {
         appendCodeCards(out, result, true);
         appendRecommendations(out, "处理建议", result, narrative);
         appendConciseMetrics(out, result.metrics(), metricUnits);
-        appendTrendsSection(out, result.trends());
+        appendTrendsSection(out, result.trends(), "运行趋势", false);
         appendConclusionBoundary(out, result.diagnosis());
         out.append("\n---\n\n完整明细（事件时间线、数据质量、证据溯源、报告编号 ")
             .append(result.metadata().reportId()).append("）请下载运行报告。\n");
@@ -96,7 +95,7 @@ public final class MarkdownOperationReportRenderer {
         appendCodeCards(out, result, false);
         appendRecommendations(out, "4. 代码说明与处理建议", result, narrative);
         appendMetricsSection(out, result.metrics(), metricUnits);
-        appendTrendsSection(out, result.trends());
+        appendTrendsSection(out, result.trends(), "6. 运行趋势", true);
         appendQualitySection(out, result);
         appendEventsSection(out, result.statusTimeline());
         appendLimitationsSection(out, result.limitations());
@@ -116,7 +115,7 @@ public final class MarkdownOperationReportRenderer {
                 .append(formatTime(result.period().analysisWindowEnd())).append("）的历史分析。\n\n");
             return;
         }
-        if (result.diagnosis().status() == DiagnosisStatus.DATA_INSUFFICIENT) {
+        if (result.diagnosis().status() == org.ruoyi.fault.domain.enums.DiagnosisStatus.DATA_INSUFFICIENT) {
             out.append("当前状态无法确认：窗口内数据缺失或不足。\n\n");
         }
     }
@@ -129,12 +128,11 @@ public final class MarkdownOperationReportRenderer {
             .filter(event -> event.type() == FaultCodeType.ALARM).toList();
         if (faults.isEmpty() && alarms.isEmpty()) {
             if (headingCards) {
-                out.append("\n## 故障与报警\n\n窗口内未发现故障码或报警码。\n");
-            } else {
-                out.append("窗口内未发现故障码或报警码。\n");
+                out.append("\n## 故障与报警\n\n");
             }
+            appendNoCodesText(out, result);
         } else {
-            Map<String, CandidateFault> candidates = candidateFaultsByCode(result.diagnosis());
+            Map<String, CandidateFault> candidates = candidateFaultsByCode(result.diagnosisDetail());
             List<OperationReportResult.Event> all = new ArrayList<>(faults);
             all.addAll(alarms);
             for (int index = 0; index < all.size(); index++) {
@@ -152,6 +150,14 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
+    private static void appendNoCodesText(StringBuilder out, OperationReportResult result) {
+        if (result.periodStatus() == ReportHealthStatus.UNKNOWN) {
+            out.append("有效数据中未观测到故障码或报警码；但由于数据不足，无法确认整个周期不存在故障或报警。\n");
+            return;
+        }
+        out.append("窗口内未发现故障码或报警码。\n");
+    }
+
     private static void appendCodeCard(StringBuilder out, OperationReportResult.Event occurrence, FaultCodeType type,
                                        Map<String, CandidateFault> candidates,
                                        boolean headingCard, boolean firstCard) {
@@ -167,7 +173,10 @@ public final class MarkdownOperationReportRenderer {
         }
         out.append("- 发生时间：").append(formatTime(occurrence.firstSeenAt())).append(" ~ ")
             .append(formatTime(occurrence.lastSeenAt())).append('\n');
-        out.append("- 采样命中：").append(occurrence.occurrenceCount()).append(" 条记录\n");
+        out.append("- 采样命中：").append(occurrence.sampleHitCount()).append(" 条记录\n");
+        if (occurrence.recoveredAt() != null) {
+            out.append("- 恢复确认时间：").append(formatTime(occurrence.recoveredAt())).append('\n');
+        }
         out.append("- 手册匹配：").append(knowledgeStatusText(candidates.get(occurrence.code()))).append('\n');
     }
 
@@ -179,7 +188,7 @@ public final class MarkdownOperationReportRenderer {
             out.append(narrative.trim()).append('\n');
             return;
         }
-        List<CandidateFault> candidates = result.diagnosis() == null ? List.of() : result.diagnosis().candidateFaults();
+        List<CandidateFault> candidates = result.diagnosisDetail() == null ? List.of() : result.diagnosisDetail().candidateFaults();
         if (!candidates.isEmpty()) {
             // 知识匹配状态已在代码卡片展示，此处只强调代码类型，避免重复结论
             for (CandidateFault candidate : candidates) {
@@ -214,11 +223,11 @@ public final class MarkdownOperationReportRenderer {
     }
 
     /** 结论边界：说明判断依据，避免把“未发现代码”扩大成“设备完全健康”。 */
-    private static void appendConclusionBoundary(StringBuilder out, DiagnosisResult diagnosis) {
+    private static void appendConclusionBoundary(StringBuilder out, DiagnosisSummary diagnosis) {
         out.append("\n## 结论边界\n\n");
         out.append("本报告依据遥测中的显式故障码/报警码与故障知识库判断，")
             .append("未使用温度、电流等趋势推断根因，结论供运维参考。\n");
-        if (diagnosis.partial()) {
+        if (diagnosis != null && diagnosis.partial()) {
             out.append("本次诊断为降级结果，请结合完整报告的限制说明使用。\n");
         }
     }
@@ -246,7 +255,8 @@ public final class MarkdownOperationReportRenderer {
     private static void appendConclusionSection(StringBuilder out, OperationReportResult result) {
         out.append("\n## 2. 运行状态结论\n\n");
         appendUnconfirmedBanner(out, result);
-        out.append("**设备状态：").append(result.overallStatus().getDisplayName()).append("**\n\n");
+        out.append("**报告周期状态：").append(result.periodStatus().getDisplayName())
+            .append(" · 当前状态：").append(result.currentStatus().getDisplayName()).append("**\n\n");
         out.append(result.summary().conclusion()).append('\n');
         if (result.diagnosis().partial()) {
             out.append("\n注意：本次诊断为降级结果，部分步骤未完整执行。\n");
@@ -296,11 +306,16 @@ public final class MarkdownOperationReportRenderer {
     }
 
     /** 只列出已有分桶事实，不作预测、斜率或异常趋势判断。 */
-    private static void appendTrendsSection(StringBuilder out, List<OperationReportResult.Trend> trends) {
-        if (trends == null || trends.isEmpty()) {
+    private static void appendTrendsSection(StringBuilder out, List<OperationReportResult.Trend> trends, String title,
+                                            boolean renderWhenEmpty) {
+        if ((trends == null || trends.isEmpty()) && !renderWhenEmpty) {
             return;
         }
-        out.append("\n## 运行趋势\n\n");
+        out.append("\n## ").append(title).append("\n\n");
+        if (trends == null || trends.isEmpty()) {
+            out.append("无可展示的运行趋势。\n");
+            return;
+        }
         for (OperationReportResult.Trend trend : trends) {
             if (trend.points().isEmpty()) {
                 continue;
@@ -367,9 +382,9 @@ public final class MarkdownOperationReportRenderer {
         lines.add(peak.append("。").toString());
     }
 
-    /** 6. 数据质量（仅完整版）。 */
+    /** 7. 数据质量（仅完整版）。 */
     private static void appendQualitySection(StringBuilder out, OperationReportResult result) {
-        out.append("\n## 6. 数据质量\n\n");
+        out.append("\n## 7. 数据质量\n\n");
         DataQualitySummary quality = result.dataQuality();
         if (quality == null) {
             out.append("无数据质量摘要。\n");
@@ -385,9 +400,9 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
-    /** 7. 状态与事件时间线（仅完整版）；状态值按当前数据契约翻译，不直接展示原始码。 */
+    /** 8. 状态与事件时间线（仅完整版）；状态值按当前数据契约翻译，不直接展示原始码。 */
     private static void appendEventsSection(StringBuilder out, List<OperationReportResult.StatusTimelineEvent> events) {
-        out.append("\n## 7. 状态与事件时间线\n\n");
+        out.append("\n## 8. 状态与事件时间线\n\n");
         if (events.isEmpty()) {
             out.append("窗口内未记录到状态变化事件。\n");
             return;
@@ -423,9 +438,9 @@ public final class MarkdownOperationReportRenderer {
         };
     }
 
-    /** 8. 限制说明（仅完整版）。 */
+    /** 9. 限制说明（仅完整版）。 */
     private static void appendLimitationsSection(StringBuilder out, List<String> reportLimitations) {
-        out.append("\n## 8. 限制说明\n\n");
+        out.append("\n## 9. 限制说明\n\n");
         Set<String> limitations = new LinkedHashSet<>(reportLimitations);
         if (limitations.isEmpty()) {
             out.append("- 无\n");
@@ -436,9 +451,9 @@ public final class MarkdownOperationReportRenderer {
         }
     }
 
-    /** 9. 证据与溯源（仅完整版）；证据类型使用中文名，title 与类型名相同时不重复。 */
+    /** 10. 证据与溯源（仅完整版）；证据类型使用中文名，title 与类型名相同时不重复。 */
     private static void appendEvidenceSection(StringBuilder out, OperationReportResult result) {
-        out.append("\n## 9. 证据与溯源\n\n");
+        out.append("\n## 10. 证据与溯源\n\n");
         List<OperationReportResult.Evidence> evidence = result.evidence().stream()
             .filter(reference -> reference != null && reference.userVisible()).toList();
         if (evidence.isEmpty()) {

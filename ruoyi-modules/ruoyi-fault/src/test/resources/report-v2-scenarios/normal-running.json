@@ -3,6 +3,7 @@
     "deviceName" : "G120-SCENARIO",
     "inverterName" : "INV-SCENARIO"
   },
+  "currentStatus" : "NORMAL",
   "dataQuality" : {
     "completeness" : 1.0,
     "duplicateCount" : 0,
@@ -14,58 +15,11 @@
   },
   "diagnosis" : {
     "alarmCodes" : [ ],
-    "candidateFaults" : [ ],
-    "currentState" : null,
-    "dataQuality" : {
-      "completeness" : 1.0,
-      "duplicateCount" : 0,
-      "gapCount" : 0,
-      "invalidTimeCount" : 0,
-      "rawRecordCount" : 4,
-      "sufficient" : true,
-      "validRecordCount" : 4
-    },
     "decisionRationale" : [ ],
-    "deviceName" : "G120-SCENARIO",
-    "endTime" : "2026-08-10 09:04:00",
-    "evidenceIndex" : [ {
-      "evidenceCode" : "EV-001",
-      "evidenceId" : 1,
-      "evidenceType" : "TELEMETRY",
-      "summary" : "normal-running：4 条有效记录",
-      "title" : "遥测记录",
-      "userVisible" : true
-    } ],
-    "fallbackToLatestData" : false,
     "faultCodes" : [ ],
-    "inverterName" : "INV-SCENARIO",
-    "latestObservedAt" : "2026-08-10 09:03:00",
-    "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
-    "observations" : [ ],
     "partial" : false,
-    "recommendations" : [ "保持常规巡检，无需额外处理。" ],
-    "requestId" : "scenario-normal-running",
-    "requestedEndTime" : "2026-08-10 09:04:00",
-    "requestedStartTime" : "2026-08-10 09:00:00",
-    "startTime" : "2026-08-10 09:00:00",
-    "statistics" : {
-      "avgActualPower" : 10.0,
-      "avgInverterTemp" : 35.0,
-      "avgMotorTemp" : 40.0,
-      "maxActualPower" : 10.0,
-      "maxInverterLoadRate" : 45.0,
-      "maxInverterTemp" : 35.0,
-      "maxMotorLoadRate" : 50.0,
-      "maxMotorTemp" : 40.0,
-      "minActualPower" : 10.0,
-      "minInverterTemp" : 35.0,
-      "minMotorTemp" : 40.0,
-      "sampleCount" : 4
-    },
     "status" : "NO_EXPLICIT_FAULT",
-    "symptom" : null,
-    "unknownCodes" : [ ],
-    "windowFindings" : null
+    "unknownCodes" : [ ]
   },
   "events" : [ ],
   "evidence" : [ {
@@ -147,7 +101,6 @@
     "minimum" : 1450.0,
     "peakAt" : null
   } ],
-  "overallStatus" : "NORMAL",
   "period" : {
     "analysisWindowEnd" : "2026-08-10 09:04:00",
     "analysisWindowStart" : "2026-08-10 09:00:00",
@@ -157,6 +110,7 @@
     "windowEnd" : "2026-08-10 09:04:00",
     "windowStart" : "2026-08-10 09:00:00"
   },
+  "periodStatus" : "NORMAL",
   "recommendations" : [ {
     "content" : "保持常规巡检，无需额外处理。",
     "source" : "diagnosis.recommendations"
@@ -327,4 +281,3 @@
     } ]
   } ]
 }
-

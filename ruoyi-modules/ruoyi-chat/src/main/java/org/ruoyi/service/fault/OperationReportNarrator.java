@@ -51,8 +51,8 @@ public class OperationReportNarrator {
         if (model == null) {
             return null;
         }
-        FaultExecutionResult execution = new FaultExecutionResult(null, report.diagnosis(), Map.of(),
-            report.diagnosis().limitations());
+        FaultExecutionResult execution = new FaultExecutionResult(null, report.diagnosisDetail(), Map.of(),
+            report.limitations());
         String body;
         try {
             body = model.chat(List.of(
@@ -107,7 +107,7 @@ public class OperationReportNarrator {
         }
         out.append(label).append("=");
         for (OperationReportResult.Event occurrence : occurrences) {
-            out.append(occurrence.code()).append("(采样命中=").append(occurrence.occurrenceCount())
+            out.append(occurrence.code()).append("(采样命中=").append(occurrence.sampleHitCount())
                 .append("条记录, 首次=").append(occurrence.firstSeenAt())
                 .append(", 最近=").append(occurrence.lastSeenAt()).append(") ");
         }

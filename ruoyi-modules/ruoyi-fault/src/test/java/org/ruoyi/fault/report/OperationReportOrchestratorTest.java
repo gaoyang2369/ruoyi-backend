@@ -91,7 +91,8 @@ class OperationReportOrchestratorTest {
 
         assertTrue(result.metadata().reportId().startsWith("RP-"));
         assertEquals(OperationReportResult.REPORT_TYPE, result.metadata().reportType());
-        assertEquals(ReportHealthStatus.FAULT, result.overallStatus());
+        assertEquals(ReportHealthStatus.FAULT, result.periodStatus());
+        assertEquals(ReportHealthStatus.NORMAL, result.currentStatus());
         assertEquals(command().startTime(), result.period().windowStart());
         assertEquals(command().endTime(), result.period().windowEnd());
         assertTrue(result.summary().conclusion().contains("F30005"));
@@ -99,7 +100,7 @@ class OperationReportOrchestratorTest {
         assertEquals(List.of("F30005"), result.summary().faultCodes());
         assertEquals(1, result.events().size());
         assertEquals("F30005", result.events().get(0).code());
-        assertEquals(3, result.events().get(0).occurrenceCount());
+        assertEquals(3, result.events().get(0).sampleHitCount());
         assertEquals(8, result.metrics().size());
         assertEquals(620D, metric(result, "dcVoltage").average());
         assertEquals(12D, metric(result, "currentActual").average());
@@ -129,6 +130,7 @@ class OperationReportOrchestratorTest {
         assertTrue(result.events().stream().anyMatch(event -> event.code().equals("F30005") && event.active()));
         assertTrue(result.events().stream().anyMatch(event -> event.code().equals("A07089")
             && !event.active() && recovered.equals(event.recoveredAt())));
+        assertEquals(ReportHealthStatus.FAULT, result.currentStatus());
     }
 
     @Test
@@ -144,7 +146,8 @@ class OperationReportOrchestratorTest {
 
         OperationReportResult result = orchestrator.generate(command());
 
-        assertEquals(ReportHealthStatus.UNKNOWN, result.overallStatus());
+        assertEquals(ReportHealthStatus.UNKNOWN, result.periodStatus());
+        assertEquals(ReportHealthStatus.UNKNOWN, result.currentStatus());
         assertTrue(result.metrics().isEmpty());
         assertTrue(result.trends().isEmpty());
     }
@@ -154,7 +157,7 @@ class OperationReportOrchestratorTest {
             .thenReturn(reportSnapshot(telemetry(List.of(), List.of())));
         when(faultDiagnosisOrchestrator.diagnose(any(DiagnosisCommand.class), any(TelemetryQueryResult.class)))
             .thenReturn(diagnosis(status));
-        return orchestrator.generate(command()).overallStatus();
+        return orchestrator.generate(command()).periodStatus();
     }
 
     private static DiagnosisCommand command() {

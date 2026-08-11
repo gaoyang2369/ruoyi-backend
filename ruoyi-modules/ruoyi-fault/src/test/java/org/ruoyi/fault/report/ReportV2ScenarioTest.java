@@ -88,6 +88,7 @@ class ReportV2ScenarioTest {
         Scenario scenario = recoveredAlarm();
 
         assertCompleteScenario(scenario, ReportHealthStatus.ATTENTION, DiagnosisStatus.WARNING_DETECTED);
+        assertEquals(ReportHealthStatus.NORMAL, scenario.report().currentStatus());
         assertEvent(scenario, "A07089", false, START.plusMinutes(1), START.plusMinutes(2), START.plusMinutes(3), 2);
         assertTrue(scenario.report().summary().alarmCodes().contains("A07089"));
         assertTrue(scenario.markdown().contains("报警 A07089 · 已恢复"));
@@ -98,6 +99,7 @@ class ReportV2ScenarioTest {
         Scenario scenario = activeAlarm();
 
         assertCompleteScenario(scenario, ReportHealthStatus.ATTENTION, DiagnosisStatus.WARNING_DETECTED);
+        assertEquals(ReportHealthStatus.ATTENTION, scenario.report().currentStatus());
         assertEvent(scenario, "A07089", true, START.plusMinutes(1), START.plusMinutes(3), null, 3);
         assertTrue(scenario.markdown().contains("报警 A07089 · 持续中"));
     }
@@ -107,11 +109,10 @@ class ReportV2ScenarioTest {
         Scenario scenario = fault();
 
         assertCompleteScenario(scenario, ReportHealthStatus.FAULT, DiagnosisStatus.FAULT_DETECTED);
+        assertEquals(ReportHealthStatus.FAULT, scenario.report().currentStatus());
         assertEvent(scenario, "F30005", true, START.plusMinutes(1), START.plusMinutes(3), null, 3);
         assertEquals(List.of("F30005"), scenario.report().diagnosis().faultCodes());
-        assertTrue(scenario.report().diagnosis().candidateFaults().stream()
-            .anyMatch(candidate -> candidate.faultCode().equals("F30005")
-                && candidate.knowledgeStatus() == KnowledgeLookupStatus.MATCHED));
+        assertEquals(DiagnosisStatus.FAULT_DETECTED, scenario.report().diagnosis().status());
         assertTrue(scenario.markdown().contains("故障 F30005 · 持续中"));
     }
 
@@ -119,7 +120,8 @@ class ReportV2ScenarioTest {
     void insufficientDataScenarioDoesNotInventMetricsTrendsOrFaultConclusion() {
         Scenario scenario = insufficientData();
 
-        assertEquals(ReportHealthStatus.UNKNOWN, scenario.report().overallStatus());
+        assertEquals(ReportHealthStatus.UNKNOWN, scenario.report().periodStatus());
+        assertEquals(ReportHealthStatus.UNKNOWN, scenario.report().currentStatus());
         assertEquals(DiagnosisStatus.DATA_INSUFFICIENT, scenario.report().diagnosis().status());
         assertFalse(scenario.report().dataQuality().sufficient());
         assertTrue(scenario.report().metrics().isEmpty());
@@ -127,7 +129,7 @@ class ReportV2ScenarioTest {
         assertTrue(scenario.report().events().isEmpty());
         assertTrue(scenario.report().diagnosis().faultCodes().isEmpty());
         assertTrue(scenario.report().diagnosis().alarmCodes().isEmpty());
-        assertTrue(scenario.report().summary().conclusion().contains("无法确认设备状态"));
+        assertTrue(scenario.report().summary().conclusion().contains("无法确认整个周期不存在故障或报警"));
         assertTrue(scenario.markdown().contains("当前状态无法确认：窗口内数据缺失或不足。"));
         assertEquals(START, scenario.snapshot().telemetry().startTime());
         assertEquals(END, scenario.snapshot().telemetry().endTime());
@@ -147,7 +149,7 @@ class ReportV2ScenarioTest {
         assertEquals(80D, power.maximum());
         assertEquals(List.of(10D, 20D, 40D, 80D), trend(scenario.report(), "actualPower").points().stream()
             .map(OperationReportResult.TrendPoint::value).toList());
-        assertTrue(scenario.markdown().contains("## 运行趋势"));
+        assertTrue(scenario.markdown().contains("## 6. 运行趋势"));
         assertTrue(scenario.markdown().contains("2026-08-10 09:03:00 80（1 条）"));
     }
 
@@ -172,7 +174,7 @@ class ReportV2ScenarioTest {
 
     private void assertCompleteScenario(Scenario scenario, ReportHealthStatus health, DiagnosisStatus diagnosisStatus) {
         OperationReportResult report = scenario.report();
-        assertEquals(health, report.overallStatus());
+        assertEquals(health, report.periodStatus());
         assertEquals(diagnosisStatus, report.diagnosis().status());
         assertTrue(report.dataQuality().sufficient());
         assertFalse(report.summary().conclusion().isBlank());
@@ -201,10 +203,10 @@ class ReportV2ScenarioTest {
     private static void assertMappedDiagnosisFields(OperationReportResult report) {
         assertEquals(report.diagnosis().faultCodes(), report.summary().faultCodes());
         assertEquals(report.diagnosis().alarmCodes(), report.summary().alarmCodes());
-        assertEquals(report.diagnosis().recommendations(), report.recommendations().stream()
-            .map(OperationReportResult.Recommendation::content).toList());
-        assertEquals(report.diagnosis().limitations(), report.limitations());
-        assertEquals(report.diagnosis().evidenceIndex().size(), report.evidence().size());
+        assertFalse(json(report).contains("candidateFaults"));
+        assertFalse(json(report).contains("recommendations\" : [ \""));
+        assertFalse(json(report).contains("evidenceIndex"));
+        assertFalse(json(report).contains("dataQuality\" : {\n      \"completeness\""));
     }
 
     private static void assertEvent(Scenario scenario, String code, boolean active, LocalDateTime firstSeen,
@@ -215,7 +217,7 @@ class ReportV2ScenarioTest {
         assertEquals(firstSeen, event.firstSeenAt());
         assertEquals(lastSeen, event.lastSeenAt());
         assertEquals(recoveredAt, event.recoveredAt());
-        assertEquals(count, event.occurrenceCount());
+        assertEquals(count, event.sampleHitCount());
     }
 
     private Scenario normal() {
@@ -313,7 +315,7 @@ class ReportV2ScenarioTest {
             case NORMAL -> "报告周期内设备状态：正常。窗口内未发现显式故障码或报警码。";
             case ATTENTION -> "报告周期内设备状态：关注。存在报警码 " + String.join("、", diagnosis.alarmCodes()) + "。";
             case FAULT -> "报告周期内设备状态：故障。检测到故障码 " + String.join("、", diagnosis.faultCodes()) + "。";
-            case UNKNOWN -> "报告周期内设备状态：未知。无数据或数据质量不足，无法确认设备状态。";
+            case UNKNOWN -> "报告周期内设备状态：未知。有效数据中未观测到显式故障码或报警码，但数据不足，无法确认整个周期不存在故障或报警。";
         };
         return new OperationReportResult.Summary(conclusion, diagnosis.faultCodes(), diagnosis.alarmCodes(),
             diagnosis.status() != DiagnosisStatus.DATA_INSUFFICIENT);

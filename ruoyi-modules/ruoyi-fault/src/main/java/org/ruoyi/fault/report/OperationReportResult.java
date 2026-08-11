@@ -1,5 +1,6 @@
 package org.ruoyi.fault.report;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
@@ -27,17 +28,19 @@ public record OperationReportResult(
     Metadata metadata,
     Asset asset,
     Period period,
-    ReportHealthStatus overallStatus,
+    ReportHealthStatus periodStatus,
+    ReportHealthStatus currentStatus,
     Summary summary,
     DataQualitySummary dataQuality,
     List<Metric> metrics,
     List<Trend> trends,
     List<Event> events,
     List<StatusTimelineEvent> statusTimeline,
-    DiagnosisResult diagnosis,
+    DiagnosisSummary diagnosis,
     List<Recommendation> recommendations,
     List<Evidence> evidence,
-    List<String> limitations
+    List<String> limitations,
+    @JsonIgnore DiagnosisResult diagnosisDetail
 ) {
 
     public static final String REPORT_TYPE = "OPERATION_REPORT_V2";
@@ -52,30 +55,55 @@ public record OperationReportResult(
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
     }
 
+    /** @deprecated 报告结构化输出请改用 {@link #periodStatus()}。 */
+    @Deprecated
+    @JsonIgnore
+    public ReportHealthStatus overallStatus() {
+        return periodStatus;
+    }
+
     /** 将一次遥测报告快照中的通用统计和分桶结果投影为 Report V2 metrics 与 trends。 */
     public static OperationReportResult fromSources(String reportId, String deviceName, String inverterName,
                                                      LocalDateTime requestedStart, LocalDateTime requestedEnd,
-                                                     LocalDateTime generatedAt, ReportHealthStatus overallStatus,
+                                                     LocalDateTime generatedAt, ReportHealthStatus periodStatus,
                                                      Summary summary, TelemetryQueryResult telemetry,
                                                      TelemetryStatisticsResult statistics,
                                                      TelemetrySeriesResult series, DiagnosisResult diagnosis) {
         TelemetryQueryResult source = telemetry == null ? emptyTelemetry() : telemetry;
+        List<Event> events = eventsOf(source.operation(), source.faultCodes(), source.alarmCodes(), source.statusEvents());
         return new OperationReportResult(
             new Metadata(reportId, generatedAt, REPORT_TYPE),
             new Asset(deviceName, inverterName),
             new Period(requestedStart, requestedEnd, source.startTime(), source.endTime(),
                 source.fallbackToLatestData(), source.latestObservedAt(), source.sourceDigest()),
-            overallStatus,
+            periodStatus,
+            currentStatusOf(source, diagnosis, events),
             summary,
             source.quality(),
             metricsOf(statistics, source.operation()),
             trendsOf(series),
-            eventsOf(source.operation(), source.faultCodes(), source.alarmCodes(), source.statusEvents()),
+            events,
             timelineOf(source.statusEvents()),
-            diagnosis,
+            DiagnosisSummary.from(diagnosis),
             recommendationsOf(diagnosis),
             evidenceOf(diagnosis),
-            diagnosis == null ? List.of() : diagnosis.limitations());
+            diagnosis == null ? List.of() : diagnosis.limitations(),
+            diagnosis);
+    }
+
+    private static ReportHealthStatus currentStatusOf(TelemetryQueryResult telemetry, DiagnosisResult diagnosis,
+                                                      List<Event> events) {
+        if (telemetry.fallbackToLatestData() || diagnosis == null
+            || diagnosis.status() == org.ruoyi.fault.domain.enums.DiagnosisStatus.DATA_INSUFFICIENT) {
+            return ReportHealthStatus.UNKNOWN;
+        }
+        if (events.stream().anyMatch(event -> event.active() && event.type() == FaultCodeType.FAULT)) {
+            return ReportHealthStatus.FAULT;
+        }
+        if (events.stream().anyMatch(event -> event.active() && event.type() == FaultCodeType.ALARM)) {
+            return ReportHealthStatus.ATTENTION;
+        }
+        return ReportHealthStatus.NORMAL;
     }
 
     private static TelemetryQueryResult emptyTelemetry() {
@@ -253,9 +281,9 @@ public record OperationReportResult(
     public record TrendPoint(LocalDateTime timestamp, Double value, long count) {
     }
 
-    /** 一个故障码或报警码在窗口内的聚合事件。 */
+    /** 一个故障码或报警码在窗口内的聚合事件；sampleHitCount 是包含该代码的遥测样本数。 */
     public record Event(String code, FaultCodeType type, boolean active, LocalDateTime firstSeenAt,
-                        LocalDateTime lastSeenAt, LocalDateTime recoveredAt, int occurrenceCount) {
+                        LocalDateTime lastSeenAt, LocalDateTime recoveredAt, int sampleHitCount) {
     }
 
     /** 供 Markdown 等时间线渲染器使用的既有状态变化事实。 */

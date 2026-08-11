@@ -169,13 +169,14 @@ class MarkdownOperationReportRendererTest {
     void rendererShowsNewMetricsAndStructuredTrendFacts() {
         OperationReportResult base = faultResult();
         OperationReportResult result = new OperationReportResult(base.metadata(), base.asset(), base.period(),
-            base.overallStatus(), base.summary(), base.dataQuality(),
+            base.periodStatus(), base.currentStatus(), base.summary(), base.dataQuality(),
             List.of(new OperationReportResult.Metric("dcVoltage", null, 620D, 610D, 630D, 10, null),
                 new OperationReportResult.Metric("currentActual", null, 12D, 10D, 14D, 10, null)),
             List.of(new OperationReportResult.Trend("dcVoltage", List.of(
                 new OperationReportResult.TrendPoint(BASE_TIME, 620D, 2L),
                 new OperationReportResult.TrendPoint(BASE_TIME.plusMinutes(1), 625D, 3L)))),
-            base.events(), base.statusTimeline(), base.diagnosis(), base.recommendations(), base.evidence(), base.limitations());
+            base.events(), base.statusTimeline(), base.diagnosis(), base.recommendations(), base.evidence(), base.limitations(),
+            base.diagnosisDetail());
 
         String markdown = MarkdownOperationReportRenderer.renderConcise(result, null,
             Map.of("dc-voltage", "V", "current-actual", "A"));

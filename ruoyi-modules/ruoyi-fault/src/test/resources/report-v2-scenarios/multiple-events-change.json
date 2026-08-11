@@ -3,6 +3,7 @@
     "deviceName" : "G120-SCENARIO",
     "inverterName" : "INV-SCENARIO"
   },
+  "currentStatus" : "FAULT",
   "dataQuality" : {
     "completeness" : 1.0,
     "duplicateCount" : 0,
@@ -14,114 +15,27 @@
   },
   "diagnosis" : {
     "alarmCodes" : [ "A07089" ],
-    "candidateFaults" : [ {
-      "codeType" : "FAULT",
-      "evidenceCodes" : [ "EV-002" ],
-      "faultCode" : "F30005",
-      "knowledgeEvidence" : [ {
-        "content" : "项目既有测试夹具中的 F30005 条目",
-        "documentId" : "g120-test-manual",
-        "fragmentId" : "F30005",
-        "fragmentIndex" : 0,
-        "knowledgeBaseId" : 7,
-        "sourceDocument" : "G120故障手册"
-      } ],
-      "knowledgeStatus" : "MATCHED"
-    }, {
-      "codeType" : "ALARM",
-      "evidenceCodes" : [ "EV-003" ],
-      "faultCode" : "A07089",
-      "knowledgeEvidence" : [ {
-        "content" : "项目既有测试夹具中的 A07089 条目",
-        "documentId" : "g120-test-manual",
-        "fragmentId" : "A07089",
-        "fragmentIndex" : 0,
-        "knowledgeBaseId" : 7,
-        "sourceDocument" : "G120故障手册"
-      } ],
-      "knowledgeStatus" : "MATCHED"
-    } ],
-    "currentState" : null,
-    "dataQuality" : {
-      "completeness" : 1.0,
-      "duplicateCount" : 0,
-      "gapCount" : 0,
-      "invalidTimeCount" : 0,
-      "rawRecordCount" : 4,
-      "sufficient" : true,
-      "validRecordCount" : 4
-    },
     "decisionRationale" : [ ],
-    "deviceName" : "G120-SCENARIO",
-    "endTime" : "2026-08-10 09:04:00",
-    "evidenceIndex" : [ {
-      "evidenceCode" : "EV-001",
-      "evidenceId" : 1,
-      "evidenceType" : "TELEMETRY",
-      "summary" : "multiple-events-change：4 条有效记录",
-      "title" : "遥测记录",
-      "userVisible" : true
-    }, {
-      "evidenceCode" : "EV-002",
-      "evidenceId" : 2,
-      "evidenceType" : "KNOWLEDGE",
-      "summary" : "G120故障手册 F30005 条目",
-      "title" : "手册资料",
-      "userVisible" : true
-    }, {
-      "evidenceCode" : "EV-003",
-      "evidenceId" : 3,
-      "evidenceType" : "KNOWLEDGE",
-      "summary" : "G120故障手册 A07089 条目",
-      "title" : "手册资料",
-      "userVisible" : true
-    } ],
-    "fallbackToLatestData" : false,
     "faultCodes" : [ "F30005" ],
-    "inverterName" : "INV-SCENARIO",
-    "latestObservedAt" : "2026-08-10 09:03:00",
-    "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
-    "observations" : [ ],
     "partial" : false,
-    "recommendations" : [ "按既有手册核对 F30005 的可能原因与处理步骤。" ],
-    "requestId" : "scenario-multiple-events-change",
-    "requestedEndTime" : "2026-08-10 09:04:00",
-    "requestedStartTime" : "2026-08-10 09:00:00",
-    "startTime" : "2026-08-10 09:00:00",
-    "statistics" : {
-      "avgActualPower" : 37.5,
-      "avgInverterTemp" : 43.25,
-      "avgMotorTemp" : 52.5,
-      "maxActualPower" : 80.0,
-      "maxInverterLoadRate" : 90.0,
-      "maxInverterTemp" : 55.0,
-      "maxMotorLoadRate" : 100.0,
-      "maxMotorTemp" : 70.0,
-      "minActualPower" : 10.0,
-      "minInverterTemp" : 35.0,
-      "minMotorTemp" : 40.0,
-      "sampleCount" : 4
-    },
     "status" : "FAULT_DETECTED",
-    "symptom" : null,
-    "unknownCodes" : [ ],
-    "windowFindings" : null
+    "unknownCodes" : [ ]
   },
   "events" : [ {
     "active" : true,
     "code" : "F30005",
     "firstSeenAt" : "2026-08-10 09:02:00",
     "lastSeenAt" : "2026-08-10 09:03:00",
-    "occurrenceCount" : 2,
     "recoveredAt" : null,
+    "sampleHitCount" : 2,
     "type" : "FAULT"
   }, {
     "active" : false,
     "code" : "A07089",
     "firstSeenAt" : "2026-08-10 09:00:00",
     "lastSeenAt" : "2026-08-10 09:01:00",
-    "occurrenceCount" : 2,
     "recoveredAt" : "2026-08-10 09:02:00",
+    "sampleHitCount" : 2,
     "type" : "ALARM"
   } ],
   "evidence" : [ {
@@ -217,7 +131,6 @@
     "minimum" : 1400.0,
     "peakAt" : null
   } ],
-  "overallStatus" : "FAULT",
   "period" : {
     "analysisWindowEnd" : "2026-08-10 09:04:00",
     "analysisWindowStart" : "2026-08-10 09:00:00",
@@ -227,6 +140,7 @@
     "windowEnd" : "2026-08-10 09:04:00",
     "windowStart" : "2026-08-10 09:00:00"
   },
+  "periodStatus" : "FAULT",
   "recommendations" : [ {
     "content" : "按既有手册核对 F30005 的可能原因与处理步骤。",
     "source" : "diagnosis.recommendations"
@@ -402,4 +316,3 @@
     } ]
   } ]
 }
-
