@@ -24,6 +24,12 @@ server:
 chat:
   default-model: deepseek-v4-flash
 
+# Hermes handles fault-agent inference and ruoyi_fault tool calls. Secrets are supplied only by the environment.
+hermes:
+  base-url: ${HERMES_BASE_URL:http://127.0.0.1:8642/v1}
+  api-key: ${HERMES_API_KEY:}
+  model: fault
+
 # 故障诊断固定遥测查询配置
 fault:
   diagnosis:

@@ -69,7 +69,11 @@ import org.ruoyi.service.agent.IAgentService;
 import org.ruoyi.service.chat.AbstractChatService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.chat.impl.memory.PersistentChatMemoryStore;
-import org.ruoyi.service.fault.FaultDiagnosisChatService;
+import org.ruoyi.service.chat.hermes.HermesChatClient;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatCancelledException;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
@@ -122,7 +126,7 @@ public class ChatServiceFacade implements IChatService {
 
     private final LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
 
-    private final FaultDiagnosisChatService faultDiagnosisChatService;
+    private final HermesChatClient hermesChatClient;
 
     /**
      * 内存实例缓存，避免同一会话重复创建
@@ -191,11 +195,13 @@ public class ChatServiceFacade implements IChatService {
                 chatRequest.getSessionId()
             );
         }
-        // FAULT_DIAGNOSIS + 非 DETERMINISTIC 必须进入确定性路径并报配置错误，不能回退 Supervisor。
+        // FAULT_DIAGNOSIS is handled by Hermes and must never fall back to the generic Supervisor.
         if (isFaultDiagnosisAgent(agentVo)) {
-            ChatModel faultModel = prepareFaultDiagnosisChatModel(chatRequest, agentVo);
+            // 历史必须在保存本轮用户消息前读取，且当前用户消息始终为 Hermes 请求的最后一条。
+            chatRequest.setModel(hermesChatClient.modelName());
+            List<HermesMessage> messages = buildHermesMessages(chatRequest, agentVo);
             saveUserMessage(chatRequest);
-            return handleFaultDiagnosisChat(chatRequest, agentVo, faultModel, tenantId);
+            return handleHermesFaultChat(chatRequest, messages);
         }
         // 模式2：智能体对话（默认走 Supervisor 多 Agent 编排）
         prepareGeneralAgentChat(chatRequest, agentVo);
@@ -208,7 +214,7 @@ public class ChatServiceFacade implements IChatService {
             RoleType.USER.getName(), chatRequest.getModel());
     }
 
-    /** 仅按场景隔离诊断路由，执行方式由 FaultDiagnosisChatService 校验。 */
+    /** Only fault-diagnosis agents use Hermes' fault model and ruoyi_fault tool. */
     private boolean isFaultDiagnosisAgent(AgentVo agentVo) {
         return agentVo != null && AgentScenarioCode.FAULT_DIAGNOSIS.name().equals(agentVo.getScenarioCode());
     }
@@ -231,44 +237,89 @@ public class ChatServiceFacade implements IChatService {
         chatRequest.setContextMessages(buildContextMessages(chatRequest, agentVo));
     }
 
-    /** 故障路径只构建 Agent 明确绑定的同步模型，绝不装配通用 RAG 或工具。 */
-    private ChatModel prepareFaultDiagnosisChatModel(ChatRequest chatRequest, AgentVo agentVo) {
-        if (agentVo == null || agentVo.getModelId() == null) {
-            throw new ServiceException("故障诊断Agent未配置模型");
-        }
-        ChatModelVo model = chatModelService.queryById(agentVo.getModelId());
-        if (model == null) throw new ServiceException("故障诊断Agent绑定的模型不存在");
-        chatRequest.setModel(model.getModelName());
-        return chatServiceFactory.getOriginalService(model.getProviderCode()).buildChatModel(model);
-    }
-
     /**
-     * 确定性诊断 SSE 生命周期与通用 Agent 一致，但绝不构建模型、MCP、Skills 或 Supervisor。
+     * Hermes owns Agent inference and the ruoyi_fault tool; RuoYi only owns history,
+     * persistence and its established frontend SSE protocol.
      */
-    private SseEmitter handleFaultDiagnosisChat(ChatRequest chatRequest, AgentVo agentVo, ChatModel faultModel, String tenantId) {
+    private SseEmitter handleHermesFaultChat(ChatRequest chatRequest, List<HermesMessage> messages) {
         Long userId = chatRequest.getUserId();
         String tokenValue = chatRequest.getTokenValue();
+        HermesStream stream;
+        try {
+            stream = hermesChatClient.open(messages);
+        } catch (HermesChatException e) {
+            SseMessageUtils.sendError(userId, e.getMessage());
+            SseMessageUtils.sendDone(userId);
+            SseMessageUtils.completeConnection(userId, tokenValue);
+            return chatRequest.getEmitter();
+        }
+        java.util.concurrent.atomic.AtomicBoolean completedNormally = new java.util.concurrent.atomic.AtomicBoolean();
+        // Servlet completion/timeout/error means the browser is gone: immediately cancel Hermes' upstream call.
+        chatRequest.getEmitter().onCompletion(() -> cancelHermesStream(stream, completedNormally));
+        chatRequest.getEmitter().onTimeout(() -> cancelHermesStream(stream, completedNormally));
+        chatRequest.getEmitter().onError(ignored -> cancelHermesStream(stream, completedNormally));
         CompletableFuture.runAsync(() -> {
             try {
-                String result = faultDiagnosisChatService.diagnose(chatRequest, agentVo, faultModel, userId, tenantId);
-                SseMessageUtils.sendContent(userId, result);
+                String result = stream.consume(new HermesChatClient.HermesStreamListener() {
+                    @Override
+                    public void onContent(String content) {
+                        SseMessageUtils.sendContent(userId, content);
+                    }
+
+                    @Override
+                    public void onToolProgress(String progress) {
+                        // Preserve the project's established structured tool event and never append it to assistant text.
+                        SseMessageUtils.sendEvent(userId, org.ruoyi.common.sse.dto.SseEventDto
+                            .mcpTool("ruoyi_fault", "running", progress));
+                    }
+                }).content();
+                completedNormally.set(true);
                 if (StringUtils.isNotBlank(result)) {
                     chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), result,
                         RoleType.ASSISTANT.getName(), chatRequest.getModel());
                 }
                 SseMessageUtils.sendDone(userId);
+            } catch (HermesChatCancelledException ignored) {
+                // The downstream SSE connection has gone away, so there is no response to forward or persist.
             } catch (ServiceException e) {
                 SseMessageUtils.sendError(userId, e.getMessage());
                 SseMessageUtils.sendDone(userId);
             } catch (Exception e) {
-                log.error("故障诊断执行失败", e);
-                SseMessageUtils.sendError(userId, "故障诊断执行失败，请稍后重试");
+                log.error("Hermes 故障诊断执行失败", e);
+                SseMessageUtils.sendError(userId, "Hermes 服务调用失败，请稍后重试");
                 SseMessageUtils.sendDone(userId);
             } finally {
                 SseMessageUtils.completeConnection(userId, tokenValue);
             }
         });
         return chatRequest.getEmitter();
+    }
+
+    private static void cancelHermesStream(HermesStream stream, java.util.concurrent.atomic.AtomicBoolean completedNormally) {
+        if (!completedNormally.get()) {
+            stream.cancel();
+        }
+    }
+
+    /** Build a bounded OpenAI-compatible transcript while retaining RuoYi as the history authority. */
+    private List<HermesMessage> buildHermesMessages(ChatRequest chatRequest, AgentVo agentVo) {
+        List<HermesMessage> messages = new ArrayList<>();
+        if (agentVo != null && StringUtils.isNotBlank(agentVo.getSystemPrompt())) {
+            messages.add(new HermesMessage(RoleType.SYSTEM.getName(), agentVo.getSystemPrompt()));
+        }
+        List<ChatMessage> history = chatMessageService.getMessagesBySessionIdAndUserId(
+            chatRequest.getSessionId(), chatRequest.getUserId(), DEFAULT_MAX_MESSAGES);
+        if (history != null) {
+            for (ChatMessage message : history) {
+                if (message instanceof UserMessage userMessage) {
+                    messages.add(new HermesMessage(RoleType.USER.getName(), userMessage.singleText()));
+                } else if (message instanceof AiMessage aiMessage) {
+                    messages.add(new HermesMessage(RoleType.ASSISTANT.getName(), aiMessage.text()));
+                }
+            }
+        }
+        messages.add(new HermesMessage(RoleType.USER.getName(), chatRequest.getContent()));
+        return messages;
     }
 
     /**

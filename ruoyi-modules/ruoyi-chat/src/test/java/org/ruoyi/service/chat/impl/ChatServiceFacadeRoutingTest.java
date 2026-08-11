@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.ruoyi.common.chat.base.ThreadContext;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
@@ -25,7 +26,9 @@ import org.ruoyi.mcp.service.core.LangChain4jMcpToolProviderService;
 import org.ruoyi.mcp.service.core.ToolProviderFactory;
 import org.ruoyi.service.agent.IAgentService;
 import org.ruoyi.service.chat.IChatMessageService;
-import org.ruoyi.service.fault.FaultDiagnosisChatService;
+import org.ruoyi.service.chat.hermes.HermesChatClient;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.vector.VectorStoreService;
@@ -33,8 +36,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.env.Environment;
 
-import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.UserMessage;
 
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -68,7 +75,8 @@ class ChatServiceFacadeRoutingTest {
     @Mock private ToolProviderFactory toolProviderFactory;
     @Mock private IAgentService agentService;
     @Mock private LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
-    @Mock private FaultDiagnosisChatService faultDiagnosisChatService;
+    @Mock private HermesChatClient hermesChatClient;
+    @Mock private HermesStream hermesStream;
 
     @AfterEach
     void clearThreadContext() {
@@ -76,27 +84,28 @@ class ChatServiceFacadeRoutingTest {
     }
 
     @Test
-    void faultDiagnosisUsesDedicatedServiceAndSkipsGeneralKnowledgeRag() throws Exception {
+    void faultDiagnosisUsesHermesAndSkipsGeneralKnowledgeRag() throws Exception {
         ChatServiceFacade facade = facade();
         ChatRequest request = request();
         AgentVo faultAgent = faultAgent();
-        faultAgent.setModelId(99L);
-        ChatModelVo modelVo = new ChatModelVo();
-        modelVo.setModelName("fault-model");
-        modelVo.setProviderCode("provider");
-        ChatModel model = org.mockito.Mockito.mock(ChatModel.class);
-        org.ruoyi.service.chat.AbstractChatService provider = org.mockito.Mockito.mock(org.ruoyi.service.chat.AbstractChatService.class);
-        when(chatModelService.queryById(99L)).thenReturn(modelVo);
-        when(chatServiceFactory.getOriginalService("provider")).thenReturn(provider);
-        when(provider.buildChatModel(modelVo)).thenReturn(model);
-        when(faultDiagnosisChatService.diagnose(request, faultAgent, model, 1L, "tenant-a")).thenReturn("确定性诊断结果");
+        request.setContent("本次问题");
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20))
+            .thenReturn(List.of(UserMessage.from("历史问题"), AiMessage.from("历史回答")));
+        when(hermesChatClient.open(any())).thenReturn(hermesStream);
+        when(hermesStream.consume(any())).thenReturn(new HermesChatResult("Hermes 诊断结果"));
 
         assertSame(request.getEmitter(), facade.handleSpecialChatModes(request, faultAgent, "tenant-a"));
 
-        verify(faultDiagnosisChatService, timeout(1_000)).diagnose(request, faultAgent, model, 1L, "tenant-a");
+        verify(hermesStream, timeout(1_000)).consume(any());
         verify(knowledgeInfoService, never()).queryById(any());
         verify(chatModelService, never()).selectModelByName(any());
-        verify(chatMessageService, timeout(1_000)).saveChatMessage(1L, 2L, "确定性诊断结果", "assistant", "fault-model");
+        verify(chatMessageService, timeout(1_000)).saveChatMessage(1L, 2L, "Hermes 诊断结果", "assistant", "fault");
+        ArgumentCaptor<List<HermesChatClient.HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(hermesChatClient).open(messages.capture());
+        assertEquals(List.of("历史问题", "历史回答", "本次问题"),
+            messages.getValue().stream().map(HermesChatClient.HermesMessage::content).toList());
+        assertEquals("user", messages.getValue().get(messages.getValue().size() - 1).role());
     }
 
     @Test
@@ -108,7 +117,7 @@ class ChatServiceFacadeRoutingTest {
         assertThrows(IllegalArgumentException.class,
             () -> facade.handleSpecialChatModes(request(), generalAgent, "tenant-a"));
 
-        verifyNoInteractions(faultDiagnosisChatService);
+        verifyNoInteractions(hermesChatClient);
     }
 
     @Test
@@ -126,7 +135,7 @@ class ChatServiceFacadeRoutingTest {
 
         assertSame(workflowEmitter, facade.handleSpecialChatModes(request, faultAgent(), "tenant-a"));
 
-        verifyNoInteractions(faultDiagnosisChatService);
+        verifyNoInteractions(hermesChatClient);
     }
 
     @Test
@@ -148,7 +157,7 @@ class ChatServiceFacadeRoutingTest {
     private ChatServiceFacade facade() {
         return new ChatServiceFacade(chatModelService, chatServiceFactory, knowledgeInfoService, vectorStoreService,
             knowledgeRetrievalService, sseEmitterManager, chatMessageService, workFlowStarterService,
-            toolProviderFactory, agentService, langChain4jMcpToolProviderService, faultDiagnosisChatService);
+            toolProviderFactory, agentService, langChain4jMcpToolProviderService, hermesChatClient);
     }
 
     private static ChatRequest request() {
