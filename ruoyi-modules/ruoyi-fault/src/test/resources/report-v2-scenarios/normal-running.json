@@ -1,0 +1,330 @@
+{
+  "asset" : {
+    "deviceName" : "G120-SCENARIO",
+    "inverterName" : "INV-SCENARIO"
+  },
+  "dataQuality" : {
+    "completeness" : 1.0,
+    "duplicateCount" : 0,
+    "gapCount" : 0,
+    "invalidTimeCount" : 0,
+    "rawRecordCount" : 4,
+    "sufficient" : true,
+    "validRecordCount" : 4
+  },
+  "diagnosis" : {
+    "alarmCodes" : [ ],
+    "candidateFaults" : [ ],
+    "currentState" : null,
+    "dataQuality" : {
+      "completeness" : 1.0,
+      "duplicateCount" : 0,
+      "gapCount" : 0,
+      "invalidTimeCount" : 0,
+      "rawRecordCount" : 4,
+      "sufficient" : true,
+      "validRecordCount" : 4
+    },
+    "decisionRationale" : [ ],
+    "deviceName" : "G120-SCENARIO",
+    "endTime" : "2026-08-10 09:04:00",
+    "evidenceIndex" : [ {
+      "evidenceCode" : "EV-001",
+      "evidenceId" : 1,
+      "evidenceType" : "TELEMETRY",
+      "summary" : "normal-running：4 条有效记录",
+      "title" : "遥测记录",
+      "userVisible" : true
+    } ],
+    "fallbackToLatestData" : false,
+    "faultCodes" : [ ],
+    "inverterName" : "INV-SCENARIO",
+    "latestObservedAt" : "2026-08-10 09:03:00",
+    "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+    "observations" : [ ],
+    "partial" : false,
+    "recommendations" : [ "保持常规巡检，无需额外处理。" ],
+    "requestId" : "scenario-normal-running",
+    "requestedEndTime" : "2026-08-10 09:04:00",
+    "requestedStartTime" : "2026-08-10 09:00:00",
+    "startTime" : "2026-08-10 09:00:00",
+    "statistics" : {
+      "avgActualPower" : 10.0,
+      "avgInverterTemp" : 35.0,
+      "avgMotorTemp" : 40.0,
+      "maxActualPower" : 10.0,
+      "maxInverterLoadRate" : 45.0,
+      "maxInverterTemp" : 35.0,
+      "maxMotorLoadRate" : 50.0,
+      "maxMotorTemp" : 40.0,
+      "minActualPower" : 10.0,
+      "minInverterTemp" : 35.0,
+      "minMotorTemp" : 40.0,
+      "sampleCount" : 4
+    },
+    "status" : "NO_EXPLICIT_FAULT",
+    "symptom" : null,
+    "unknownCodes" : [ ],
+    "windowFindings" : null
+  },
+  "events" : [ ],
+  "evidence" : [ {
+    "content" : "normal-running：4 条有效记录",
+    "evidenceCode" : "EV-001",
+    "evidenceId" : 1,
+    "source" : "遥测记录",
+    "type" : "TELEMETRY",
+    "userVisible" : true
+  } ],
+  "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+  "metadata" : {
+    "generatedAt" : "2026-08-10 09:05:00",
+    "reportId" : "RP-SC-NORMAL-RUNNING",
+    "reportType" : "OPERATION_REPORT_V2"
+  },
+  "metrics" : [ {
+    "average" : 10.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 10.0,
+    "metricName" : "actualPower",
+    "minimum" : 10.0,
+    "peakAt" : null
+  }, {
+    "average" : 10.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 10.0,
+    "metricName" : "currentActual",
+    "minimum" : 10.0,
+    "peakAt" : null
+  }, {
+    "average" : 600.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 600.0,
+    "metricName" : "dcVoltage",
+    "minimum" : 600.0,
+    "peakAt" : null
+  }, {
+    "average" : 45.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 45.0,
+    "metricName" : "inverterLoadRate",
+    "minimum" : 45.0,
+    "peakAt" : null
+  }, {
+    "average" : 35.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 35.0,
+    "metricName" : "inverterTemp",
+    "minimum" : 35.0,
+    "peakAt" : null
+  }, {
+    "average" : 50.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 50.0,
+    "metricName" : "motorLoadRate",
+    "minimum" : 50.0,
+    "peakAt" : "2026-08-10 09:00:00"
+  }, {
+    "average" : 40.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 40.0,
+    "metricName" : "motorTemp",
+    "minimum" : 40.0,
+    "peakAt" : "2026-08-10 09:00:00"
+  }, {
+    "average" : 1450.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 1450.0,
+    "metricName" : "speedActual",
+    "minimum" : 1450.0,
+    "peakAt" : null
+  } ],
+  "overallStatus" : "NORMAL",
+  "period" : {
+    "analysisWindowEnd" : "2026-08-10 09:04:00",
+    "analysisWindowStart" : "2026-08-10 09:00:00",
+    "fallbackToLatestData" : false,
+    "latestObservedAt" : "2026-08-10 09:03:00",
+    "sourceDigest" : "sha256:c082c7c5e6a029fbda4313fc3490fb12f52c7f47d80926326ba231685dfd6503",
+    "windowEnd" : "2026-08-10 09:04:00",
+    "windowStart" : "2026-08-10 09:00:00"
+  },
+  "recommendations" : [ {
+    "content" : "保持常规巡检，无需额外处理。",
+    "source" : "diagnosis.recommendations"
+  } ],
+  "statusTimeline" : [ {
+    "alarmCode" : null,
+    "faultCode" : null,
+    "observedAt" : "2026-08-10 09:00:00",
+    "status" : "0"
+  } ],
+  "summary" : {
+    "alarmCodes" : [ ],
+    "conclusion" : "报告周期内设备状态：正常。窗口内未发现显式故障码或报警码。",
+    "currentStatusConfirmed" : true,
+    "faultCodes" : [ ]
+  },
+  "trends" : [ {
+    "metricName" : "actualPower",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 10.0
+    } ]
+  }, {
+    "metricName" : "currentActual",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 10.0
+    } ]
+  }, {
+    "metricName" : "dcVoltage",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 600.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 600.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 600.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 600.0
+    } ]
+  }, {
+    "metricName" : "inverterLoadRate",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 45.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 45.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 45.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 45.0
+    } ]
+  }, {
+    "metricName" : "inverterTemp",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 35.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 35.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 35.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 35.0
+    } ]
+  }, {
+    "metricName" : "motorLoadRate",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 50.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 50.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 50.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 50.0
+    } ]
+  }, {
+    "metricName" : "motorTemp",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 40.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 40.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 40.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 40.0
+    } ]
+  }, {
+    "metricName" : "speedActual",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 1450.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 1450.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 1450.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 1450.0
+    } ]
+  } ]
+}
+

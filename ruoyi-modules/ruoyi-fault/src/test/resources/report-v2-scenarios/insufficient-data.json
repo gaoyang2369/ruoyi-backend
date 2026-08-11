@@ -1,0 +1,114 @@
+{
+  "asset" : {
+    "deviceName" : "G120-SCENARIO",
+    "inverterName" : "INV-SCENARIO"
+  },
+  "dataQuality" : {
+    "completeness" : 0.25,
+    "duplicateCount" : 0,
+    "gapCount" : 3,
+    "invalidTimeCount" : 0,
+    "rawRecordCount" : 1,
+    "sufficient" : false,
+    "validRecordCount" : 1
+  },
+  "diagnosis" : {
+    "alarmCodes" : [ ],
+    "candidateFaults" : [ ],
+    "currentState" : null,
+    "dataQuality" : {
+      "completeness" : 0.25,
+      "duplicateCount" : 0,
+      "gapCount" : 3,
+      "invalidTimeCount" : 0,
+      "rawRecordCount" : 1,
+      "sufficient" : false,
+      "validRecordCount" : 1
+    },
+    "decisionRationale" : [ ],
+    "deviceName" : "G120-SCENARIO",
+    "endTime" : "2026-08-10 09:04:00",
+    "evidenceIndex" : [ {
+      "evidenceCode" : "EV-001",
+      "evidenceId" : 1,
+      "evidenceType" : "TELEMETRY",
+      "summary" : "insufficient-data：1 条有效记录",
+      "title" : "遥测记录",
+      "userVisible" : true
+    } ],
+    "fallbackToLatestData" : false,
+    "faultCodes" : [ ],
+    "inverterName" : "INV-SCENARIO",
+    "latestObservedAt" : "2026-08-10 09:00:00",
+    "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+    "observations" : [ ],
+    "partial" : false,
+    "recommendations" : [ "检查数据采集链路与网络状态，补齐数据后重新生成报告。" ],
+    "requestId" : "scenario-insufficient-data",
+    "requestedEndTime" : "2026-08-10 09:04:00",
+    "requestedStartTime" : "2026-08-10 09:00:00",
+    "startTime" : "2026-08-10 09:00:00",
+    "statistics" : {
+      "avgActualPower" : 10.0,
+      "avgInverterTemp" : 35.0,
+      "avgMotorTemp" : 40.0,
+      "maxActualPower" : 10.0,
+      "maxInverterLoadRate" : 45.0,
+      "maxInverterTemp" : 35.0,
+      "maxMotorLoadRate" : 50.0,
+      "maxMotorTemp" : 40.0,
+      "minActualPower" : 10.0,
+      "minInverterTemp" : 35.0,
+      "minMotorTemp" : 40.0,
+      "sampleCount" : 1
+    },
+    "status" : "DATA_INSUFFICIENT",
+    "symptom" : null,
+    "unknownCodes" : [ ],
+    "windowFindings" : null
+  },
+  "events" : [ ],
+  "evidence" : [ {
+    "content" : "insufficient-data：1 条有效记录",
+    "evidenceCode" : "EV-001",
+    "evidenceId" : 1,
+    "source" : "遥测记录",
+    "type" : "TELEMETRY",
+    "userVisible" : true
+  } ],
+  "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+  "metadata" : {
+    "generatedAt" : "2026-08-10 09:05:00",
+    "reportId" : "RP-SC-INSUFFICIENT-DATA",
+    "reportType" : "OPERATION_REPORT_V2"
+  },
+  "metrics" : [ ],
+  "overallStatus" : "UNKNOWN",
+  "period" : {
+    "analysisWindowEnd" : "2026-08-10 09:04:00",
+    "analysisWindowStart" : "2026-08-10 09:00:00",
+    "fallbackToLatestData" : false,
+    "latestObservedAt" : "2026-08-10 09:00:00",
+    "sourceDigest" : "sha256:aeb9fde7b4b43ff0c4925427084f6da34619d642debd5dec1afdf5892eaa84a0",
+    "windowEnd" : "2026-08-10 09:04:00",
+    "windowStart" : "2026-08-10 09:00:00"
+  },
+  "recommendations" : [ {
+    "content" : "检查数据采集链路与网络状态，补齐数据后重新生成报告。",
+    "source" : "diagnosis.recommendations"
+  } ],
+  "statusTimeline" : [ {
+    "alarmCode" : null,
+    "faultCode" : null,
+    "observedAt" : "2026-08-10 09:00:00",
+    "status" : "0"
+  } ],
+  "summary" : {
+    "alarmCodes" : [ ],
+    "conclusion" : "报告周期内设备状态：未知。无数据或数据质量不足，无法确认设备状态。",
+    "currentStatusConfirmed" : false,
+    "faultCodes" : [ ]
+  },
+  "trends" : [ ]
+}
+

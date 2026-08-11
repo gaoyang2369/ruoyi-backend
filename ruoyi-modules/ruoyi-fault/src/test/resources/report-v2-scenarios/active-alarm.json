@@ -1,0 +1,370 @@
+{
+  "asset" : {
+    "deviceName" : "G120-SCENARIO",
+    "inverterName" : "INV-SCENARIO"
+  },
+  "dataQuality" : {
+    "completeness" : 1.0,
+    "duplicateCount" : 0,
+    "gapCount" : 0,
+    "invalidTimeCount" : 0,
+    "rawRecordCount" : 4,
+    "sufficient" : true,
+    "validRecordCount" : 4
+  },
+  "diagnosis" : {
+    "alarmCodes" : [ "A07089" ],
+    "candidateFaults" : [ {
+      "codeType" : "ALARM",
+      "evidenceCodes" : [ "EV-002" ],
+      "faultCode" : "A07089",
+      "knowledgeEvidence" : [ {
+        "content" : "项目既有测试夹具中的 A07089 条目",
+        "documentId" : "g120-test-manual",
+        "fragmentId" : "A07089",
+        "fragmentIndex" : 0,
+        "knowledgeBaseId" : 7,
+        "sourceDocument" : "G120故障手册"
+      } ],
+      "knowledgeStatus" : "MATCHED"
+    } ],
+    "currentState" : null,
+    "dataQuality" : {
+      "completeness" : 1.0,
+      "duplicateCount" : 0,
+      "gapCount" : 0,
+      "invalidTimeCount" : 0,
+      "rawRecordCount" : 4,
+      "sufficient" : true,
+      "validRecordCount" : 4
+    },
+    "decisionRationale" : [ ],
+    "deviceName" : "G120-SCENARIO",
+    "endTime" : "2026-08-10 09:04:00",
+    "evidenceIndex" : [ {
+      "evidenceCode" : "EV-001",
+      "evidenceId" : 1,
+      "evidenceType" : "TELEMETRY",
+      "summary" : "active-alarm：4 条有效记录",
+      "title" : "遥测记录",
+      "userVisible" : true
+    }, {
+      "evidenceCode" : "EV-002",
+      "evidenceId" : 2,
+      "evidenceType" : "KNOWLEDGE",
+      "summary" : "G120故障手册 A07089 条目",
+      "title" : "手册资料",
+      "userVisible" : true
+    } ],
+    "fallbackToLatestData" : false,
+    "faultCodes" : [ ],
+    "inverterName" : "INV-SCENARIO",
+    "latestObservedAt" : "2026-08-10 09:03:00",
+    "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+    "observations" : [ ],
+    "partial" : false,
+    "recommendations" : [ "按既有手册核对 A07089 的可能原因与处理步骤。" ],
+    "requestId" : "scenario-active-alarm",
+    "requestedEndTime" : "2026-08-10 09:04:00",
+    "requestedStartTime" : "2026-08-10 09:00:00",
+    "startTime" : "2026-08-10 09:00:00",
+    "statistics" : {
+      "avgActualPower" : 13.0,
+      "avgInverterTemp" : 38.0,
+      "avgMotorTemp" : 43.0,
+      "maxActualPower" : 16.0,
+      "maxInverterLoadRate" : 56.0,
+      "maxInverterTemp" : 41.0,
+      "maxMotorLoadRate" : 65.0,
+      "maxMotorTemp" : 46.0,
+      "minActualPower" : 10.0,
+      "minInverterTemp" : 35.0,
+      "minMotorTemp" : 40.0,
+      "sampleCount" : 4
+    },
+    "status" : "WARNING_DETECTED",
+    "symptom" : null,
+    "unknownCodes" : [ ],
+    "windowFindings" : null
+  },
+  "events" : [ {
+    "active" : true,
+    "code" : "A07089",
+    "firstSeenAt" : "2026-08-10 09:01:00",
+    "lastSeenAt" : "2026-08-10 09:03:00",
+    "occurrenceCount" : 3,
+    "recoveredAt" : null,
+    "type" : "ALARM"
+  } ],
+  "evidence" : [ {
+    "content" : "active-alarm：4 条有效记录",
+    "evidenceCode" : "EV-001",
+    "evidenceId" : 1,
+    "source" : "遥测记录",
+    "type" : "TELEMETRY",
+    "userVisible" : true
+  }, {
+    "content" : "G120故障手册 A07089 条目",
+    "evidenceCode" : "EV-002",
+    "evidenceId" : 2,
+    "source" : "手册资料",
+    "type" : "KNOWLEDGE",
+    "userVisible" : true
+  } ],
+  "limitations" : [ "诊断仅依据显式故障码、报警码和既有知识匹配，不推断趋势根因。" ],
+  "metadata" : {
+    "generatedAt" : "2026-08-10 09:05:00",
+    "reportId" : "RP-SC-ACTIVE-ALARM",
+    "reportType" : "OPERATION_REPORT_V2"
+  },
+  "metrics" : [ {
+    "average" : 13.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 16.0,
+    "metricName" : "actualPower",
+    "minimum" : 10.0,
+    "peakAt" : null
+  }, {
+    "average" : 13.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 16.0,
+    "metricName" : "currentActual",
+    "minimum" : 10.0,
+    "peakAt" : null
+  }, {
+    "average" : 607.5,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 615.0,
+    "metricName" : "dcVoltage",
+    "minimum" : 600.0,
+    "peakAt" : null
+  }, {
+    "average" : 50.25,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 56.0,
+    "metricName" : "inverterLoadRate",
+    "minimum" : 45.0,
+    "peakAt" : null
+  }, {
+    "average" : 38.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 41.0,
+    "metricName" : "inverterTemp",
+    "minimum" : 35.0,
+    "peakAt" : null
+  }, {
+    "average" : 57.5,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 65.0,
+    "metricName" : "motorLoadRate",
+    "minimum" : 50.0,
+    "peakAt" : "2026-08-10 09:03:00"
+  }, {
+    "average" : 43.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 46.0,
+    "metricName" : "motorTemp",
+    "minimum" : 40.0,
+    "peakAt" : "2026-08-10 09:03:00"
+  }, {
+    "average" : 1435.0,
+    "count" : 4,
+    "current" : null,
+    "maximum" : 1450.0,
+    "metricName" : "speedActual",
+    "minimum" : 1420.0,
+    "peakAt" : null
+  } ],
+  "overallStatus" : "ATTENTION",
+  "period" : {
+    "analysisWindowEnd" : "2026-08-10 09:04:00",
+    "analysisWindowStart" : "2026-08-10 09:00:00",
+    "fallbackToLatestData" : false,
+    "latestObservedAt" : "2026-08-10 09:03:00",
+    "sourceDigest" : "sha256:56e64a111a7e0215657914ac2912584ee3029f155afefa0501bd1552a68bbff6",
+    "windowEnd" : "2026-08-10 09:04:00",
+    "windowStart" : "2026-08-10 09:00:00"
+  },
+  "recommendations" : [ {
+    "content" : "按既有手册核对 A07089 的可能原因与处理步骤。",
+    "source" : "diagnosis.recommendations"
+  } ],
+  "statusTimeline" : [ {
+    "alarmCode" : null,
+    "faultCode" : null,
+    "observedAt" : "2026-08-10 09:00:00",
+    "status" : "0"
+  }, {
+    "alarmCode" : "A07089",
+    "faultCode" : null,
+    "observedAt" : "2026-08-10 09:01:00",
+    "status" : "42"
+  } ],
+  "summary" : {
+    "alarmCodes" : [ "A07089" ],
+    "conclusion" : "报告周期内设备状态：关注。存在报警码 A07089。",
+    "currentStatusConfirmed" : true,
+    "faultCodes" : [ ]
+  },
+  "trends" : [ {
+    "metricName" : "actualPower",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 12.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 14.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 16.0
+    } ]
+  }, {
+    "metricName" : "currentActual",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 10.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 12.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 14.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 16.0
+    } ]
+  }, {
+    "metricName" : "dcVoltage",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 600.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 605.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 610.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 615.0
+    } ]
+  }, {
+    "metricName" : "inverterLoadRate",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 45.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 48.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 52.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 56.0
+    } ]
+  }, {
+    "metricName" : "inverterTemp",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 35.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 37.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 39.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 41.0
+    } ]
+  }, {
+    "metricName" : "motorLoadRate",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 50.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 55.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 60.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 65.0
+    } ]
+  }, {
+    "metricName" : "motorTemp",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 40.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 42.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 44.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 46.0
+    } ]
+  }, {
+    "metricName" : "speedActual",
+    "points" : [ {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:00:00",
+      "value" : 1450.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:01:00",
+      "value" : 1440.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:02:00",
+      "value" : 1430.0
+    }, {
+      "count" : 1,
+      "timestamp" : "2026-08-10 09:03:00",
+      "value" : 1420.0
+    } ]
+  } ]
+}
+

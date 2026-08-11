@@ -87,7 +87,7 @@ public record OperationReportResult(
         if (statistics == null || statistics.metrics() == null) {
             return List.of();
         }
-        return statistics.metrics().entrySet().stream().map(entry -> {
+        return statistics.metrics().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).map(entry -> {
             java.util.Map<String, Number> values = entry.getValue();
             return new Metric(entry.getKey(), null, numberOf(values, "avg"), numberOf(values, "min"),
                 numberOf(values, "max"), integerOf(values, "count"), peakAt(entry.getKey(), operation));
@@ -110,7 +110,7 @@ public record OperationReportResult(
         if (series == null || series.series() == null) {
             return List.of();
         }
-        return series.series().entrySet().stream()
+        return series.series().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
             .map(entry -> new Trend(entry.getKey(), entry.getValue().stream()
                 .map(point -> new TrendPoint(point.timestamp(), point.value(), point.count())).toList()))
             .toList();
