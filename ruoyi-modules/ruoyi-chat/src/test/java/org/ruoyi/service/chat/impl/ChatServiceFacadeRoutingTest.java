@@ -45,8 +45,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -88,6 +90,7 @@ class ChatServiceFacadeRoutingTest {
         ChatServiceFacade facade = facade();
         ChatRequest request = request();
         AgentVo faultAgent = faultAgent();
+        faultAgent.setSystemPrompt("只回答故障诊断问题");
         request.setContent("本次问题");
         when(hermesChatClient.modelName()).thenReturn("fault");
         when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20))
@@ -103,9 +106,96 @@ class ChatServiceFacadeRoutingTest {
         verify(chatMessageService, timeout(1_000)).saveChatMessage(1L, 2L, "Hermes 诊断结果", "assistant", "fault");
         ArgumentCaptor<List<HermesChatClient.HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
         verify(hermesChatClient).open(messages.capture());
-        assertEquals(List.of("历史问题", "历史回答", "本次问题"),
+        assertEquals(List.of("只回答故障诊断问题", "历史问题", "历史回答", "本次问题"),
             messages.getValue().stream().map(HermesChatClient.HermesMessage::content).toList());
+        assertEquals(List.of("system", "user", "assistant", "user"),
+            messages.getValue().stream().map(HermesChatClient.HermesMessage::role).toList());
         assertEquals("user", messages.getValue().get(messages.getValue().size() - 1).role());
+    }
+
+    @Test
+    void secondTurnOfSameSessionSendsFirstUserAndAssistantAsHermesHistory() {
+        ChatServiceFacade facade = facade();
+        AgentVo agent = faultAgent();
+        HermesStream firstStream = org.mockito.Mockito.mock(HermesStream.class);
+        HermesStream secondStream = org.mockito.Mockito.mock(HermesStream.class);
+        ChatRequest firstTurn = request(2L, "第一轮用户问题");
+        ChatRequest secondTurn = request(2L, "第二轮用户问题");
+
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        // The first query sees no prior messages; after the normal first completion, RuoYi persistence is
+        // represented by the history returned for the second request.
+        when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20)).thenReturn(
+            List.of(), List.of(UserMessage.from("第一轮用户问题"), AiMessage.from("第一轮助手回复")));
+        when(hermesChatClient.open(any())).thenReturn(firstStream, secondStream);
+        when(firstStream.consume(any())).thenReturn(new HermesChatResult("第一轮助手回复"));
+        when(secondStream.consume(any())).thenReturn(new HermesChatResult("第二轮助手回复"));
+
+        facade.handleSpecialChatModes(firstTurn, agent, "tenant-a");
+        verify(firstStream, timeout(1_000)).consume(any());
+        facade.handleSpecialChatModes(secondTurn, agent, "tenant-a");
+        verify(secondStream, timeout(1_000)).consume(any());
+
+        ArgumentCaptor<List<HermesChatClient.HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(hermesChatClient, times(2)).open(messages.capture());
+        assertEquals(List.of("第一轮用户问题"), contents(messages.getAllValues().get(0)));
+        assertEquals(List.of("第一轮用户问题", "第一轮助手回复", "第二轮用户问题"),
+            contents(messages.getAllValues().get(1)));
+        assertEquals("user", last(messages.getAllValues().get(1)).role());
+        assertEquals("第二轮用户问题", last(messages.getAllValues().get(1)).content());
+        verify(chatMessageService, timeout(1_000)).saveChatMessage(
+            1L, 2L, "第一轮助手回复", "assistant", "fault");
+    }
+
+    @Test
+    void differentSessionsUseOnlyTheirOwnHistory() {
+        ChatServiceFacade facade = facade();
+        HermesStream firstStream = org.mockito.Mockito.mock(HermesStream.class);
+        HermesStream secondStream = org.mockito.Mockito.mock(HermesStream.class);
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20))
+            .thenReturn(List.of(UserMessage.from("会话一问题"), AiMessage.from("会话一回复")));
+        when(chatMessageService.getMessagesBySessionIdAndUserId(3L, 1L, 20))
+            .thenReturn(List.of(UserMessage.from("会话二问题"), AiMessage.from("会话二回复")));
+        when(hermesChatClient.open(any())).thenReturn(firstStream, secondStream);
+        when(firstStream.consume(any())).thenReturn(new HermesChatResult("会话一新回复"));
+        when(secondStream.consume(any())).thenReturn(new HermesChatResult("会话二新回复"));
+
+        facade.handleSpecialChatModes(request(2L, "会话一当前问题"), faultAgent(), "tenant-a");
+        verify(firstStream, timeout(1_000)).consume(any());
+        facade.handleSpecialChatModes(request(3L, "会话二当前问题"), faultAgent(), "tenant-a");
+        verify(secondStream, timeout(1_000)).consume(any());
+
+        ArgumentCaptor<List<HermesChatClient.HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(hermesChatClient, times(2)).open(messages.capture());
+        assertEquals(List.of("会话一问题", "会话一回复", "会话一当前问题"),
+            contents(messages.getAllValues().get(0)));
+        assertEquals(List.of("会话二问题", "会话二回复", "会话二当前问题"),
+            contents(messages.getAllValues().get(1)));
+    }
+
+    @Test
+    void toolProgressIsForwardedButOnlyFinalAssistantTextIsPersisted() {
+        ChatServiceFacade facade = facade();
+        ChatRequest request = request(2L, "请诊断设备");
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        when(chatMessageService.getMessagesBySessionIdAndUserId(2L, 1L, 20)).thenReturn(List.of());
+        when(hermesChatClient.open(any())).thenReturn(hermesStream);
+        when(hermesStream.consume(any())).thenAnswer(invocation -> {
+            HermesChatClient.HermesStreamListener listener = invocation.getArgument(0);
+            listener.onToolProgress("{\"tool\":\"ruoyi_fault\",\"status\":\"running\"}");
+            listener.onContent("最终诊断回复");
+            return new HermesChatResult("最终诊断回复");
+        });
+
+        facade.handleSpecialChatModes(request, faultAgent(), "tenant-a");
+
+        ArgumentCaptor<String> contents = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> roles = ArgumentCaptor.forClass(String.class);
+        verify(chatMessageService, timeout(1_000).times(2)).saveChatMessage(
+            eq(1L), eq(2L), contents.capture(), roles.capture(), eq("fault"));
+        assertEquals(List.of("请诊断设备", "最终诊断回复"), contents.getAllValues());
+        assertEquals(List.of("user", "assistant"), roles.getAllValues());
     }
 
     @Test
@@ -161,12 +251,25 @@ class ChatServiceFacadeRoutingTest {
     }
 
     private static ChatRequest request() {
+        return request(2L, null);
+    }
+
+    private static ChatRequest request(Long sessionId, String content) {
         ChatRequest request = new ChatRequest();
         request.setUserId(1L);
-        request.setSessionId(2L);
+        request.setSessionId(sessionId);
+        request.setContent(content);
         request.setTokenValue("token-a");
         request.setEmitter(new SseEmitter(1_000L));
         return request;
+    }
+
+    private static List<String> contents(List<HermesChatClient.HermesMessage> messages) {
+        return messages.stream().map(HermesChatClient.HermesMessage::content).toList();
+    }
+
+    private static HermesChatClient.HermesMessage last(List<HermesChatClient.HermesMessage> messages) {
+        return messages.get(messages.size() - 1);
     }
 
     private static AgentVo faultAgent() {
