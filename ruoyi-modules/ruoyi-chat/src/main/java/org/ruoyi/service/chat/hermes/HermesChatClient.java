@@ -11,6 +11,7 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.config.HermesChatProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -37,6 +38,7 @@ public class HermesChatClient {
     private final ObjectMapper objectMapper;
     private final OkHttpClient httpClient;
 
+    @Autowired
     public HermesChatClient(HermesChatProperties properties, ObjectMapper objectMapper) {
         this(properties, objectMapper, new OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
