@@ -148,14 +148,15 @@ class ChatServiceFacadeRoutingTest {
         when(hermesChatClient.modelName()).thenReturn("fault");
         when(faultRequestPlanner.planExplicitReportRequest(any(), any())).thenReturn(Optional.of(plan));
         when(faultDiagnosisChatService.generateReport(request, agent, plan, 1L, "tenant-a"))
-            .thenReturn(new FaultReportChatResult("运行报告已生成。", attachment));
+            .thenReturn(new FaultReportChatResult("运行报告已生成。", attachment, true));
 
         assertSame(request.getEmitter(), facade.handleSpecialChatModes(request, agent, "tenant-a"));
 
         verify(faultDiagnosisChatService, timeout(1_000)).generateReport(request, agent, plan, 1L, "tenant-a");
         verify(hermesChatClient, never()).open(any());
         verify(chatMessageService, timeout(1_000)).saveChatMessage(
-            1L, 2L, "运行报告已生成。", "assistant", "fault");
+            eq(1L), eq(2L), eq("运行报告已生成。"), eq("assistant"), eq("fault"),
+            org.mockito.ArgumentMatchers.argThat(remark -> remark != null && remark.contains("\"reportCode\":\"RP-1\"")));
     }
 
     @Test

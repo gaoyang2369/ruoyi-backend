@@ -217,6 +217,25 @@ class FaultRequestPlannerTest {
     }
 
     @Test
+    void recognizesChineseNumeralDeviceAliasForOperationReport() {
+        var plan = planner().planExplicitReportRequest(
+            "生成G120电机一最近一小时的运行报告", List.of("G120电机1", "G120电机2")).orElseThrow();
+
+        assertEquals("G120电机1", plan.deviceName());
+        assertEquals(60, plan.recentMinutes());
+    }
+
+    @Test
+    void convertsModelDeviceAliasToConfiguredAsset() {
+        ChatModel model = model("{\"tasks\":[\"DIAGNOSE\"],\"deviceName\":\"G120电机一\",\"recentMinutes\":30}");
+
+        var plan = planner().plan(model, List.of(), now(), "Asia/Shanghai", 30, List.of("G120电机1"),
+            "看看G120电机一的状态", "r-alias");
+
+        assertEquals("G120电机1", plan.deviceName());
+    }
+
+    @Test
     void ordinaryDiagnosisIsNotInterceptedAsReport() {
         assertTrue(planner().planExplicitReportRequest(
             "诊断G120电机1最近30分钟是否有报警", List.of("G120电机1")).isEmpty());

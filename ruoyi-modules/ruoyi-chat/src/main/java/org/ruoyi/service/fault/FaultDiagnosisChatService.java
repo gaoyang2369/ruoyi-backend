@@ -64,8 +64,9 @@ public class FaultDiagnosisChatService {
     private final TelemetryQueryService telemetryQueryService;
     private final OperationReportOrchestrator operationReportOrchestrator;
     private final OperationReportSnapshotService operationReportSnapshotService;
+    private final OperationReportService operationReportService;
 
-    /** 使用门面已识别的报告计划生成一次确定性快照；不会调用 Hermes 或报告叙事模型。 */
+    /** 使用门面已识别的报告计划生成一次快照；事实确定后再由 Agent 绑定模型做受约束归纳。 */
     public FaultReportChatResult generateReport(ChatRequest request, AgentVo agent, FaultRequestPlan reportPlan,
                                                 Long userId, String tenantId) {
         validateAgent(agent);
@@ -75,14 +76,16 @@ public class FaultDiagnosisChatService {
         String requestId = UUID.randomUUID().toString();
         NormalizedPlan normalized = normalize(reportPlan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) {
-            return new FaultReportChatResult(normalized.clarification(), null);
+            return new FaultReportChatResult(normalized.clarification(), null, false);
         }
         return createReport(request, normalized.command(), userId, tenantId);
     }
 
     private FaultReportChatResult createReport(ChatRequest request, DiagnosisCommand command,
                                                Long userId, String tenantId) {
-        OperationReportResult report = operationReportOrchestrator.generate(command);
+        OperationReportResult facts = operationReportOrchestrator.generate(command);
+        String narrative = operationReportService.narrate(command.context().agentId(), facts);
+        OperationReportResult report = facts.withNarrative(narrative);
         operationReportSnapshotService.save(report, request.getSessionId(), userId, tenantId);
         double completeness = report.dataQuality() == null ? 0D : report.dataQuality().completeness();
         FaultReportAttachment attachment = new FaultReportAttachment(
@@ -96,7 +99,8 @@ public class FaultDiagnosisChatService {
             report.currentStatus().name(),
             report.periodStatus().name(),
             completeness);
-        return new FaultReportChatResult("运行报告已生成。" + report.summary().conclusion(), attachment);
+        return new FaultReportChatResult("运行报告已生成。" + report.summary().conclusion(), attachment,
+            narrative != null);
     }
 
     /** 仅供结构化兼容测试或内部回退使用，不作为生产聊天入口。 */
@@ -232,7 +236,8 @@ public class FaultDiagnosisChatService {
         LocalDateTime start = input.getStartTime(), end = input.getEndTime();
         if (start == null && end == null) { end = now(); start = end.minusMinutes(faultDiagnosisProperties.getDefaultWindowMinutes()); }
         else if (start == null || end == null) throw new ServiceException("故障诊断开始时间和结束时间必须同时提供");
-        return command(request, agent, userId, tenantId, input.getDeviceName(), input.getInverterName(), start, end,
+        return command(request, agent, userId, tenantId,
+            FaultAssetNameResolver.canonicalize(input.getDeviceName(), faultDiagnosisProperties.getAllowedAssets()), input.getInverterName(), start, end,
             StringUtils.isNotBlank(input.getSymptom()) ? input.getSymptom() : request.getContent());
     }
 
@@ -272,18 +277,20 @@ public class FaultDiagnosisChatService {
         if (!tasks.contains(FaultTaskType.DIAGNOSE) && !tasks.contains(FaultTaskType.GENERATE_REPORT)) return NormalizedPlan.ready(new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), proposed.inverterName(), proposed.recentMinutes(), proposed.startTime(), proposed.endTime(), codes, proposed.symptom(), proposed.requestedAspects()), null);
         if (StringUtils.isBlank(proposed.deviceName())) return NormalizedPlan.clarify(
             tasks.contains(FaultTaskType.GENERATE_REPORT) ? "请补充需要生成报告的设备名称。" : "请补充需要诊断的设备名称。");
+        String deviceName = FaultAssetNameResolver.canonicalize(proposed.deviceName(),
+            faultDiagnosisProperties.getAllowedAssets());
         TimeRange range = timeRange(proposed);
         if (range == null) return NormalizedPlan.clarify("请同时提供开始和结束时间，或提供有效的最近分钟数。");
         // 逆变器可选：用户未指明时由遥测数据确定性补全，而不是要求用户补充一个他们通常不知道的名称。
         String inverterName = proposed.inverterName();
         if (StringUtils.isBlank(inverterName)) {
             try {
-                inverterName = telemetryQueryService.resolveInverterName(proposed.deviceName());
+                inverterName = telemetryQueryService.resolveInverterName(deviceName);
             } catch (ServiceException ex) {
                 return NormalizedPlan.clarify(ex.getMessage());
             }
         }
-        FaultRequestPlan plan = new FaultRequestPlan(List.copyOf(tasks), proposed.deviceName(), inverterName, proposed.recentMinutes(), formatTime(range.start()), formatTime(range.end()), codes, proposed.symptom(), proposed.requestedAspects());
+        FaultRequestPlan plan = new FaultRequestPlan(List.copyOf(tasks), deviceName, inverterName, proposed.recentMinutes(), formatTime(range.start()), formatTime(range.end()), codes, proposed.symptom(), proposed.requestedAspects());
         return NormalizedPlan.ready(plan, command(request, agent, userId, tenantId, plan.deviceName(),
             plan.inverterName(), range.start(), range.end(),
             StringUtils.isNotBlank(plan.symptom()) ? plan.symptom() : request.getContent(), requestId));

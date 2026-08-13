@@ -101,4 +101,14 @@ public interface IChatMessageService {
      * @param modelName 模型名称
      */
     void saveChatMessage(Long userId, Long sessionId, String content, String role, String modelName);
+
+    /**
+     * 保存带业务附件元数据的聊天消息。
+     *
+     * @param remark 紧凑的附件元数据 JSON；普通消息传 null
+     */
+    default void saveChatMessage(Long userId, Long sessionId, String content, String role, String modelName,
+                                 String remark) {
+        saveChatMessage(userId, sessionId, content, role, modelName);
+    }
 }

@@ -43,6 +43,7 @@ public record OperationReportResult(
     DiagnosisSummary diagnosis,
     List<Recommendation> recommendations,
     List<Evidence> evidence,
+    String narrative,
     List<String> limitations,
     @JsonIgnore DiagnosisResult diagnosisDetail
 ) {
@@ -58,6 +59,7 @@ public record OperationReportResult(
         statusTimeline = statusTimeline == null ? List.of() : List.copyOf(statusTimeline);
         recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
         evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        narrative = narrative == null || narrative.isBlank() ? null : narrative.trim();
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
     }
 
@@ -108,8 +110,16 @@ public record OperationReportResult(
             DiagnosisSummary.from(diagnosis),
             recommendationsOf(diagnosis),
             evidenceOf(diagnosis),
+            null,
             diagnosis == null ? List.of() : diagnosis.limitations(),
             diagnosis);
+    }
+
+    /** 将通过安全校验的模型叙事合并回同一份报告快照，不改变任何结构化事实。 */
+    public OperationReportResult withNarrative(String narrative) {
+        return new OperationReportResult(metadata, asset, period, periodStatus, currentStatus, summary,
+            dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, diagnosis,
+            recommendations, evidence, narrative, limitations, diagnosisDetail);
     }
 
     /** 将后端配置中的单位冻结到报告快照；未配置的指标故意不补默认单位。 */

@@ -55,7 +55,8 @@ public class OperationReportService {
         DiagnosisCommand command = new DiagnosisCommand(deviceName, inverterName, range.start(), range.end(),
             null, agent.getKnowledgeIds() == null ? List.of() : List.copyOf(agent.getKnowledgeIds()),
             new DiagnosisRequestContext(agent.getId(), null, userId, tenantId, UUID.randomUUID().toString()));
-        OperationReportResult report = operationReportOrchestrator.generate(command);
+        OperationReportResult facts = operationReportOrchestrator.generate(command);
+        OperationReportResult report = facts.withNarrative(narrate(agent.getId(), facts));
         return operationReportSnapshotService.save(report, bo.getSessionId(), userId, tenantId);
     }
 

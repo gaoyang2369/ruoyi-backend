@@ -68,6 +68,7 @@ class OperationReportSnapshotServiceTest {
         assertEquals("tenant-a", entity.getValue().getTenantId());
         assertTrue(entity.getValue().getReportJson().contains("\"reportId\":\"RP-100\""));
         assertTrue(entity.getValue().getReportJson().contains("\"sourceDocuments\":[\"manual.pdf\"]"));
+        assertTrue(entity.getValue().getReportJson().contains("\"narrative\":\"模型归纳内容\""));
 
         when(mapper.selectOne(any())).thenReturn(entity.getValue());
         OperationReportResult restored = service.get("RP-100", 7L, "tenant-a");
@@ -116,6 +117,6 @@ class OperationReportSnapshotServiceTest {
         return new OperationReportResult(base.metadata(), base.asset(), base.period(), base.periodStatus(),
             base.currentStatus(), base.summary(), base.dataQuality(), base.metricUnits(), base.dataCompleteness(),
             base.metrics(), base.trends(), base.events(), base.statusTimeline(), diagnosis, base.recommendations(),
-            base.evidence(), base.limitations(), base.diagnosisDetail());
+            base.evidence(), "模型归纳内容", base.limitations(), base.diagnosisDetail());
     }
 }

@@ -166,6 +166,15 @@ class MarkdownOperationReportRendererTest {
     }
 
     @Test
+    void rendererUsesNarrativeFrozenInReportSnapshot() {
+        OperationReportResult report = faultResult().withNarrative("模型归纳内容");
+
+        String markdown = MarkdownOperationReportRenderer.renderFull(report, null, Map.of());
+
+        assertTrue(markdown.contains("模型归纳内容"));
+    }
+
+    @Test
     void rendererShowsNewMetricsAndStructuredTrendFacts() {
         OperationReportResult base = faultResult();
         OperationReportResult result = new OperationReportResult(base.metadata(), base.asset(), base.period(),
@@ -176,8 +185,8 @@ class MarkdownOperationReportRendererTest {
             List.of(new OperationReportResult.Trend("dcVoltage", List.of(
                 new OperationReportResult.TrendPoint(BASE_TIME, 620D, 2L),
                 new OperationReportResult.TrendPoint(BASE_TIME.plusMinutes(1), 625D, 3L)))),
-            base.events(), base.statusTimeline(), base.diagnosis(), base.recommendations(), base.evidence(), base.limitations(),
-            base.diagnosisDetail());
+            base.events(), base.statusTimeline(), base.diagnosis(), base.recommendations(), base.evidence(),
+            base.narrative(), base.limitations(), base.diagnosisDetail());
 
         String markdown = MarkdownOperationReportRenderer.renderConcise(result, null,
             Map.of("dc-voltage", "V", "current-actual", "A"));

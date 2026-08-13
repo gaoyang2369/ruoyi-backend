@@ -50,7 +50,7 @@ public class FaultRequestPlanner {
     private static final Pattern REPORT_INTENT =
         Pattern.compile("运行报告|状态报告|设备报告|生成.{0,12}报告|报告.{0,12}(生成|导出|下载|查看|制作)");
     private static final Pattern RECENT_RANGE =
-        Pattern.compile("(?:最近|近|过去)\\s*(\\d+)\\s*(分钟|小时|天)");
+        Pattern.compile("(?:最近|近|过去)\\s*(\\d+|[一二三四五六七八九十])\\s*(分钟|小时|天)");
     private static final Pattern EXPLICIT_DATE_TIME = Pattern.compile(
         "(\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)");
     private static final int LOG_RESPONSE_LIMIT = 800;
@@ -72,16 +72,11 @@ public class FaultRequestPlanner {
         if (StringUtils.isBlank(question) || !REPORT_INTENT.matcher(question).find()) {
             return Optional.empty();
         }
-        String deviceName = allowedAssets == null ? null : allowedAssets.stream()
-            .filter(StringUtils::isNotBlank)
-            .sorted((left, right) -> Integer.compare(right.length(), left.length()))
-            .filter(question::contains)
-            .findFirst()
-            .orElse(null);
+        String deviceName = FaultAssetNameResolver.findMentionedAsset(question, allowedAssets).orElse(null);
         Integer recentMinutes = null;
         Matcher recent = RECENT_RANGE.matcher(question);
         if (recent.find()) {
-            int amount = Integer.parseInt(recent.group(1));
+            int amount = parseRecentAmount(recent.group(1));
             recentMinutes = switch (recent.group(2)) {
                 case "小时" -> Math.multiplyExact(amount, 60);
                 case "天" -> Math.multiplyExact(amount, 24 * 60);
@@ -98,6 +93,25 @@ public class FaultRequestPlanner {
         String endTime = times.size() == 2 ? times.get(1) : null;
         return Optional.of(new FaultRequestPlan(List.of(FaultTaskType.GENERATE_REPORT), deviceName, null,
             recentMinutes, startTime, endTime, List.of(), null, List.of()));
+    }
+
+    private static int parseRecentAmount(String value) {
+        if (value.length() == 1) {
+            return switch (value.charAt(0)) {
+                case '一' -> 1;
+                case '二' -> 2;
+                case '三' -> 3;
+                case '四' -> 4;
+                case '五' -> 5;
+                case '六' -> 6;
+                case '七' -> 7;
+                case '八' -> 8;
+                case '九' -> 9;
+                case '十' -> 10;
+                default -> Integer.parseInt(value);
+            };
+        }
+        return Integer.parseInt(value);
     }
 
     public FaultRequestPlan plan(ChatModel chatModel, List<ChatMessage> history, LocalDateTime now, String timezone,
@@ -119,18 +133,25 @@ public class FaultRequestPlanner {
         FaultRequestPlan parsed = parse(response);
         if (parsed != null) {
             log.info("fault request plan parsed: requestId={}, tasks={}", requestId, parsed.tasks());
-            return parsed;
+            return canonicalizeAsset(parsed, allowedAssets);
         }
         String repairInput = response == null ? "" : response;
         String repaired = safelyReadResponse(chatModel, List.of(SystemMessage.from(SYSTEM + "以下输出不是合法 JSON 或不符合上述固定结构。只把它修复为上述结构的合法 JSON，不新增事实，不做诊断。"), UserMessage.from(repairInput)), requestId);
         parsed = parse(repaired);
         if (parsed != null) {
             log.info("fault request plan repaired: requestId={}, tasks={}", requestId, parsed.tasks());
-            return parsed;
+            return canonicalizeAsset(parsed, allowedAssets);
         }
         log.warn("fault request plan parse failed: requestId={}, firstResponse={}, repairedResponse={}",
             requestId, responseSnippet(response), responseSnippet(repaired));
         throw new ServiceException("无法理解故障诊断请求，请换一种方式描述设备、时间和问题");
+    }
+
+    private static FaultRequestPlan canonicalizeAsset(FaultRequestPlan plan, List<String> allowedAssets) {
+        return new FaultRequestPlan(plan.tasks(),
+            FaultAssetNameResolver.canonicalize(plan.deviceName(), allowedAssets), plan.inverterName(),
+            plan.recentMinutes(), plan.startTime(), plan.endTime(), plan.faultCodes(), plan.symptom(),
+            plan.requestedAspects());
     }
 
     /**

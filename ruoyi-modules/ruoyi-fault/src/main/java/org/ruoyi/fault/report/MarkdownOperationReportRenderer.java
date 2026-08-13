@@ -191,8 +191,9 @@ public final class MarkdownOperationReportRenderer {
     private static void appendRecommendations(StringBuilder out, String title, OperationReportResult result,
                                               String narrative) {
         out.append("\n## ").append(title).append("\n\n");
-        if (narrative != null && !narrative.isBlank()) {
-            out.append(narrative.trim()).append('\n');
+        String effectiveNarrative = narrative == null ? result.narrative() : narrative;
+        if (effectiveNarrative != null && !effectiveNarrative.isBlank()) {
+            out.append(effectiveNarrative.trim()).append('\n');
             return;
         }
         List<DiagnosisSummary.CodeKnowledgeSummary> candidates = result.diagnosis() == null

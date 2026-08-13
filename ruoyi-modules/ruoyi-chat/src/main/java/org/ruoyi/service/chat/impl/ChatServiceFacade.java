@@ -1,6 +1,7 @@
 package org.ruoyi.service.chat.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import cn.hutool.json.JSONUtil;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.agentic.supervisor.SupervisorAgent;
 import dev.langchain4j.agentic.supervisor.SupervisorResponseStrategy;
@@ -340,14 +341,25 @@ public class ChatServiceFacade implements IChatService {
         String tokenValue = chatRequest.getTokenValue();
         CompletableFuture.runAsync(() -> {
             try {
+                SseMessageUtils.sendEvent(userId,
+                    org.ruoyi.common.sse.dto.SseEventDto.mcpTool(
+                        "generate_operation_report", "pending", null));
                 FaultReportChatResult result = faultDiagnosisChatService.generateReport(
                     chatRequest, agent, reportPlan, userId, tenantId);
+                String progressResult = result.llmNarrativeGenerated()
+                    ? "遥测查询、确定性分析和模型归纳已完成"
+                    : "遥测查询与确定性分析已完成，模型归纳不可用，已使用安全降级内容";
+                SseMessageUtils.sendEvent(userId,
+                    org.ruoyi.common.sse.dto.SseEventDto.mcpTool(
+                        "generate_operation_report", "success", progressResult));
                 if (StringUtils.isNotBlank(result.content())) {
                     SseMessageUtils.sendContent(userId, result.content());
                     publishVoiceSync(chatRequest, ChatSyncEvent.assistantDelta(
                         chatRequest.getSessionId(), chatRequest.getClientRequestId(), result.content()));
+                    String attachmentRemark = result.attachment() == null
+                        ? null : JSONUtil.toJsonStr(result.attachment().toEventData());
                     chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), result.content(),
-                        RoleType.ASSISTANT.getName(), chatRequest.getModel());
+                        RoleType.ASSISTANT.getName(), chatRequest.getModel(), attachmentRemark);
                 }
                 if (result.attachment() != null) {
                     SseMessageUtils.sendEvent(userId,

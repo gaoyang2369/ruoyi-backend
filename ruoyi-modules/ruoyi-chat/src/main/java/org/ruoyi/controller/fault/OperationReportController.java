@@ -1,6 +1,5 @@
 package org.ruoyi.controller.fault;
 
-import cn.dev33.satoken.annotation.SaCheckPermission;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 
 /**
  * 设备运行与状态报告接口。生成后立即保存完整结构化快照，详情和下载只读取该快照。
+ * 访问控制使用快照的 userId + tenantId 所有权校验，不额外依赖菜单权限。
  */
 @Validated
 @RestController
@@ -43,7 +43,6 @@ public class OperationReportController extends BaseController {
 
     private final OperationReportService operationReportService;
 
-    @SaCheckPermission("fault:report:query")
     @PostMapping("/generate")
     public R<OperationReportVo> generate(@Valid @RequestBody OperationReportGenerateBo bo) {
         OperationReportResult result = operationReportService.generate(
@@ -51,7 +50,6 @@ public class OperationReportController extends BaseController {
         return R.ok(toVo(result));
     }
 
-    @SaCheckPermission("fault:report:query")
     @GetMapping("/{reportCode}")
     public R<OperationReportVo> detail(@PathVariable String reportCode) {
         OperationReportResult result = operationReportService.get(
@@ -59,7 +57,6 @@ public class OperationReportController extends BaseController {
         return R.ok(toVo(result));
     }
 
-    @SaCheckPermission("fault:report:export")
     @Log(title = "运行报告", businessType = BusinessType.EXPORT)
     @GetMapping("/download/{reportCode}")
     public void download(@PathVariable String reportCode, HttpServletResponse response) throws IOException {

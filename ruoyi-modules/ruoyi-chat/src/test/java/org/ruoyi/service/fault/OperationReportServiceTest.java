@@ -14,6 +14,8 @@ import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.report.OperationReportOrchestrator;
+import org.ruoyi.fault.report.OperationReportResult;
+import org.ruoyi.fault.report.ReportHealthStatus;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.ruoyi.service.agent.IAgentService;
 
@@ -61,6 +63,7 @@ class OperationReportServiceTest {
     @Test
     void buildsCommandFromAgentKnowledgeBasesAndExplicitWindow() {
         when(agentService.queryById(7L)).thenReturn(enabledAgent());
+        when(operationReportOrchestrator.generate(any())).thenReturn(generatedReport());
 
         OperationReportGenerateBo bo = bo("设备A", "逆变器A",
             LocalDateTime.of(2026, 8, 4, 0, 0), LocalDateTime.of(2026, 8, 4, 1, 0));
@@ -83,6 +86,7 @@ class OperationReportServiceTest {
     void resolvesInverterWhenBlank() {
         when(agentService.queryById(7L)).thenReturn(enabledAgent());
         when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器B");
+        when(operationReportOrchestrator.generate(any())).thenReturn(generatedReport());
 
         service.generate(bo("设备A", null, LocalDateTime.of(2026, 8, 4, 0, 0),
             LocalDateTime.of(2026, 8, 4, 1, 0)), 3L, "tenant");
@@ -95,6 +99,7 @@ class OperationReportServiceTest {
     @Test
     void usesDefaultWindowWhenTimesAreBothNull() {
         when(agentService.queryById(7L)).thenReturn(enabledAgent());
+        when(operationReportOrchestrator.generate(any())).thenReturn(generatedReport());
 
         service.generate(bo("设备A", "逆变器A", null, null), 3L, "tenant");
 
@@ -160,6 +165,15 @@ class OperationReportServiceTest {
         agent.setExecutionMode(AgentExecutionMode.DETERMINISTIC.name());
         agent.setKnowledgeIds(List.of(9L, 10L));
         return agent;
+    }
+
+    private static OperationReportResult generatedReport() {
+        LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
+        LocalDateTime end = start.plusHours(1);
+        return OperationReportResult.fromSources("RP-TEST", "设备A", "逆变器A", start, end, end,
+            ReportHealthStatus.UNKNOWN,
+            new OperationReportResult.Summary("数据不足。", List.of(), List.of(), false),
+            null, null, null, null);
     }
 
 }

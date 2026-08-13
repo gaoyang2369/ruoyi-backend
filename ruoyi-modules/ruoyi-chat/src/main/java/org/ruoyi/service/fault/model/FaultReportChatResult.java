@@ -1,5 +1,9 @@
 package org.ruoyi.service.fault.model;
 
-/** 确定性报告聊天分支的短正文与可选附件。 */
-public record FaultReportChatResult(String content, FaultReportAttachment attachment) {
+/** 报告聊天分支的短正文、可选附件与模型归纳状态。 */
+public record FaultReportChatResult(
+    String content,
+    FaultReportAttachment attachment,
+    boolean llmNarrativeGenerated
+) {
 }

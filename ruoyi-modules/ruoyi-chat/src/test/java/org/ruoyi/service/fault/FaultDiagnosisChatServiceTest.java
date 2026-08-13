@@ -73,6 +73,7 @@ class FaultDiagnosisChatServiceTest {
     @Mock private org.ruoyi.fault.telemetry.service.TelemetryQueryService telemetryQueryService;
     @Mock private org.ruoyi.fault.report.OperationReportOrchestrator operationReportOrchestrator;
     @Mock private OperationReportSnapshotService operationReportSnapshotService;
+    @Mock private OperationReportService operationReportService;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -321,6 +322,28 @@ class FaultDiagnosisChatServiceTest {
     }
 
     @Test
+    void resolvesDeviceAliasBeforeLookingUpInverterAndDiagnosing() {
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.DIAGNOSE), "G120电机一", null, null,
+            null, null, List.of(), "症状", List.of());
+        when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
+        when(faultDiagnosisProperties.getDefaultWindowMinutes()).thenReturn(30);
+        when(faultDiagnosisProperties.getAllowedAssets()).thenReturn(List.of("G120电机1"));
+        when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
+        when(telemetryQueryService.resolveInverterName("G120电机1")).thenReturn("逆变器A");
+        when(faultDiagnosisOrchestrator.diagnose(any())).thenReturn(result(false, List.of(), List.of(), List.of()));
+        ChatRequest request = new ChatRequest();
+        request.setContent("看看G120电机一的运行状态");
+        request.setSessionId(9L);
+
+        chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
+
+        ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
+        verify(faultDiagnosisOrchestrator).diagnose(captor.capture());
+        assertEquals("G120电机1", captor.getValue().deviceName());
+        assertEquals("逆变器A", captor.getValue().inverterName());
+    }
+
+    @Test
     void clarifiesWhenDeviceHasMultipleInvertersInsteadOfDiagnosing() {
         FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.DIAGNOSE), "设备A", null, null,
             null, null, List.of(), "症状", List.of());
@@ -347,6 +370,7 @@ class FaultDiagnosisChatServiceTest {
         when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
         when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
         when(operationReportOrchestrator.generate(any())).thenReturn(reportResult());
+        when(operationReportService.narrate(eq(7L), any())).thenReturn("受结构化事实约束的模型归纳");
         ChatRequest request = new ChatRequest();
         request.setContent("生成设备A今天的运行报告");
         request.setSessionId(9L);
@@ -355,7 +379,10 @@ class FaultDiagnosisChatServiceTest {
 
         assertEquals("运行报告已生成。报告周期内设备状态：关注。", answer);
         verify(operationReportOrchestrator).generate(any());
-        verify(operationReportSnapshotService).save(any(), eq(9L), eq(3L), eq("tenant-a"));
+        ArgumentCaptor<org.ruoyi.fault.report.OperationReportResult> reportCaptor =
+            ArgumentCaptor.forClass(org.ruoyi.fault.report.OperationReportResult.class);
+        verify(operationReportSnapshotService).save(reportCaptor.capture(), eq(9L), eq(3L), eq("tenant-a"));
+        assertEquals("受结构化事实约束的模型归纳", reportCaptor.getValue().narrative());
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
         verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
     }
