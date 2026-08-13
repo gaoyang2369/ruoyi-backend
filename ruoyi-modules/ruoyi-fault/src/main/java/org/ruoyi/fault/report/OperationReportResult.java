@@ -425,11 +425,18 @@ public record OperationReportResult(
     }
 
     public record EventMetricComparison(IntervalMetricStats before, IntervalMetricStats during,
-                                        IntervalMetricStats after) {
+                                        IntervalMetricStats after, Double duringMinusBeforeAvg,
+                                        Double afterMinusDuringAvg, Double afterMinusBeforeAvg) {
         public EventMetricComparison {
             before = before == null ? IntervalMetricStats.unavailable() : before;
             during = during == null ? IntervalMetricStats.unavailable() : during;
             after = after == null ? IntervalMetricStats.unavailable() : after;
+        }
+
+        /** 兼容没有事件差值的既有内部构造调用。 */
+        public EventMetricComparison(IntervalMetricStats before, IntervalMetricStats during,
+                                     IntervalMetricStats after) {
+            this(before, during, after, null, null, null);
         }
     }
 

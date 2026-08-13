@@ -51,6 +51,9 @@ class OperationReportAnalysisServiceTest {
         assertEquals(1, comparison.before().sampleCount());
         assertEquals(2, comparison.during().sampleCount());
         assertEquals(2, comparison.after().sampleCount());
+        assertEquals(15D, comparison.duringMinusBeforeAvg());
+        assertEquals(2.5D, comparison.afterMinusDuringAvg());
+        assertEquals(17.5D, comparison.afterMinusBeforeAvg());
     }
 
     @Test
@@ -64,6 +67,9 @@ class OperationReportAnalysisServiceTest {
         assertEquals(30D, event.metrics().get("motorTemp").before().avg());
         assertEquals(45D, event.metrics().get("motorTemp").during().avg());
         assertFalse(event.metrics().get("motorTemp").after().available());
+        assertEquals(15D, event.metrics().get("motorTemp").duringMinusBeforeAvg());
+        assertNull(event.metrics().get("motorTemp").afterMinusDuringAvg());
+        assertNull(event.metrics().get("motorTemp").afterMinusBeforeAvg());
     }
 
     @Test

@@ -72,11 +72,13 @@ public class OperationReportAnalysisService {
             LocalDateTime eventEnd = event.recoveredAt() == null ? reportEnd : clamp(event.recoveredAt(), start, reportEnd);
             Map<String, OperationReportResult.EventMetricComparison> comparisons = new LinkedHashMap<>();
             for (OperationReportResult.Metric metric : metrics) {
-                comparisons.put(metric.metricName(), new OperationReportResult.EventMetricComparison(
-                    interval(samples, metric.metricName(), reportStart, start),
-                    interval(samples, metric.metricName(), start, eventEnd),
-                    event.recoveredAt() == null ? OperationReportResult.IntervalMetricStats.unavailable()
-                        : interval(samples, metric.metricName(), eventEnd, reportEnd)));
+                OperationReportResult.IntervalMetricStats before = interval(samples, metric.metricName(), reportStart, start);
+                OperationReportResult.IntervalMetricStats during = interval(samples, metric.metricName(), start, eventEnd);
+                OperationReportResult.IntervalMetricStats after = event.recoveredAt() == null
+                    ? OperationReportResult.IntervalMetricStats.unavailable()
+                    : interval(samples, metric.metricName(), eventEnd, reportEnd);
+                comparisons.put(metric.metricName(), new OperationReportResult.EventMetricComparison(before, during, after,
+                    difference(during, before), difference(after, during), difference(after, before)));
             }
             result.add(new OperationReportResult.EventComparison(event.code(), event.type(), start,
                 event.recoveredAt(), comparisons));
@@ -117,6 +119,11 @@ public class OperationReportAnalysisService {
 
     private static Double subtract(Double left, Double right) {
         return left == null || right == null ? null : round(left - right);
+    }
+
+    private static Double difference(OperationReportResult.IntervalMetricStats left,
+                                     OperationReportResult.IntervalMetricStats right) {
+        return left.available() && right.available() ? subtract(left.avg(), right.avg()) : null;
     }
 
     private static Double average(List<Double> values) {

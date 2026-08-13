@@ -44,16 +44,19 @@ public class OperationReportNarrator {
         仅可引用 allowedEvidenceCodes；故障/报警码只能来自 events；p/r 参数必须原样来自 knowledgeFragments。
         可以引用 facts.metrics、facts.analysisFacts、events 时间和 dataQuality 中真实存在的遥测数值及单位；
         不能生成 facts 中不存在的遥测数值或单位。允许正常的序号、时间描述和段落编号。
-        operatingFindings 优先说明本周期主要运行参数的变化、波动范围、当前值与周期平均/范围的关系；
-        对每个事件只根据 analysisFacts.eventComparisons 说明报警前、中、后是否观察到同步变化，以及恢复后是否接近事件前水平。
-        必须区分“观察到同步变化”和“确认因果关系”；没有事实依据时写“未观察到明显同步变化”或“现有数据不足以确认因果关系”，不得推断根因。
+        operatingFindings 优先引用本周期主要运行参数的 start/end/delta、range、stdDev、当前值和周期平均值，不自行判断哪些指标波动更明显。
+        对每个事件只引用 analysisFacts.eventComparisons 中 before/during/after 的均值及后端提供的差值；可依据差值正负描述升高或降低。
+        不得自行做减法、百分比、比例或跨指标计算。没有业务阈值时，不使用“显著、剧烈、稳定、接近、恢复正常”等定性判断。
+        必须区分“观察到同步变化”和“确认因果关系”；没有事实依据时写“未观察到同步变化”或“现有数据不足以确认因果关系”，不得推断根因。
         dataQuality.sufficient 为 false 或事件区间 unavailable 时，说明数据覆盖限制，避免生成趋势结论。
         手册内容只能表述为“可能原因”或“排查方向”，不能写成已确认根因。不能输出 think、Markdown 围栏或解释。
         """;
     private static final String REPAIR_SYSTEM = """
         你是 REPORT_NARRATION JSON 修复器。将用户给出的原输出仅修复为合法 JSON，不增添事实。
+        输入包含 rejectionReason、originalResponse 和可信 facts。只修复 originalResponse 为合法 JSON，不重新诊断、不增加新事实。
         去除 think、围栏和未知字段；保留允许字段。operatingFindings/anomalyAnalysis 必须为字符串数组，basis 必须为字符串数组。
-        只输出 JSON 对象，不能解释。不得加入数值、单位、健康分或故障概率。
+        所有故障码、参数、证据、遥测数字和单位必须来自 facts；无法支持的数字应删除或改写为不带数字的事实陈述。
+        可以保留 facts 中真实存在的遥测数字和单位。只输出 JSON 对象，不能解释；不得加入健康分或故障概率。
         """;
 
     private final HermesChatClient hermesChatClient;
@@ -75,7 +78,8 @@ public class OperationReportNarrator {
         reject(report, first.reason(), body, null);
         try {
             String repaired = hermesChatClient.complete(List.of(new HermesMessage("system", REPAIR_SYSTEM),
-                new HermesMessage("user", body == null ? "" : body))).content();
+                new HermesMessage("user", objectMapper.writeValueAsString(repairInput(first.reason(), body,
+                    facts(report, execution)))))).content();
             Validation second = parseAndValidate(repaired, report, execution);
             if (second.narrative() != null) return accept(report, second.narrative());
             reject(report, second.reason(), repaired, null);
@@ -93,8 +97,12 @@ public class OperationReportNarrator {
 
     private void reject(OperationReportResult report, String reason, String body, Exception ex) {
         String sample = StringUtils.isBlank(body) ? "" : sanitizeForLog(body);
-        log.warn("Hermes 运行报告叙事 rejected: reportCode={}, rejectionReason={}, responseSample={}, error={}",
-            report.metadata().reportId(), reason, sample, ex == null ? "" : ex.toString());
+        String unsupported = "UNSUPPORTED_NUMBER".equals(reason) ? firstUnsupportedMeasurement(body, report) : null;
+        String numberReason = "UNSUPPORTED_NUMBER".equals(reason) && unsupported == null
+            && HEALTH_OR_PROBABILITY.matcher(body == null ? "" : body).find() ? "HEALTH_OR_PROBABILITY" : "";
+        log.warn("Hermes 运行报告叙事 rejected: reportCode={}, rejectionReason={}, unsupportedMeasurement={}, numberReason={}, responseSample={}, error={}",
+            report.metadata().reportId(), reason, unsupported == null ? "" : unsupported, numberReason, sample,
+            ex == null ? "" : ex.toString());
     }
 
     private static String sanitizeForLog(String body) {
@@ -182,7 +190,8 @@ public class OperationReportNarrator {
 
     private static String validityReason(OperationReportResult.ReportNarrative narrative, OperationReportResult report,
                                          FaultExecutionResult execution) {
-        if (narrative == null || (StringUtils.isBlank(narrative.executiveSummary()) && narrative.anomalyAnalysis().isEmpty()
+        if (narrative == null || (StringUtils.isBlank(narrative.executiveSummary()) && narrative.operatingFindings().isEmpty()
+            && narrative.anomalyAnalysis().isEmpty()
             && narrative.recommendations().isEmpty())) return "EMPTY_RESPONSE";
         for (OperationReportResult.NarrativeRecommendation item : narrative.recommendations()) {
             if (item == null || !("P1".equals(item.priority()) || "P2".equals(item.priority()) || "P3".equals(item.priority())) || StringUtils.isBlank(item.action())
@@ -196,7 +205,7 @@ public class OperationReportNarrator {
         if (!tokensAllowed(CODE, prose, codes)) return "UNKNOWN_CODE";
         if (!tokensAllowed(EVIDENCE, prose, evidence)) return "UNKNOWN_EVIDENCE";
         if (!TechnicalTokens.valid(prose, technicalTokens(execution))) return "UNKNOWN_PARAMETER";
-        if (!measurementsAllowed(prose, report) || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
+        if (firstUnsupportedMeasurement(prose, report) != null || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
         return null;
     }
 
@@ -217,7 +226,25 @@ public class OperationReportNarrator {
     }
 
     /** 遥测数值采用报告事实白名单校验，允许小数展示精度差异，不允许模型自造读数。 */
-    private static boolean measurementsAllowed(String prose, OperationReportResult report) {
+    private static String firstUnsupportedMeasurement(String prose, OperationReportResult report) {
+        if (prose == null) return null;
+        Set<MeasurementFact> allowed = allowedMeasurements(report);
+        Matcher matcher = MEASUREMENT.matcher(prose);
+        while (matcher.find()) {
+            double value;
+            try {
+                value = Double.parseDouble(matcher.group(1));
+            } catch (NumberFormatException ex) {
+                return matcher.group();
+            }
+            String unit = normalizeUnit(matcher.group(2));
+            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit)
+                && approximatelyEqual(candidate.value(), value))) return matcher.group();
+        }
+        return null;
+    }
+
+    private static Set<MeasurementFact> allowedMeasurements(OperationReportResult report) {
         Set<MeasurementFact> allowed = new LinkedHashSet<>();
         for (OperationReportResult.Metric metric : report.metrics()) {
             addMeasurements(allowed, report.metricUnits().get(metric.metricName()), metric.current(), metric.average(),
@@ -228,24 +255,20 @@ public class OperationReportNarrator {
                 metric.max(), metric.range(), metric.stdDev());
         }
         for (OperationReportResult.EventComparison event : report.analysisFacts().eventComparisons()) {
-            event.metrics().forEach((metricName, metric) -> addMeasurements(allowed, report.metricUnits().get(metricName),
+            event.metrics().forEach((metricName, metric) -> addMeasurements(allowed, unitOf(report, metricName),
                 metric.before().avg(), metric.before().min(), metric.before().max(), metric.during().avg(),
-                metric.during().min(), metric.during().max(), metric.after().avg(), metric.after().min(), metric.after().max()));
+                metric.during().min(), metric.during().max(), metric.after().avg(), metric.after().min(), metric.after().max(),
+                metric.duringMinusBeforeAvg(), metric.afterMinusDuringAvg(), metric.afterMinusBeforeAvg()));
         }
         if (report.dataQuality() != null) addMeasurements(allowed, "%", report.dataQuality().completeness() * 100D);
-        Matcher matcher = MEASUREMENT.matcher(prose);
-        while (matcher.find()) {
-            double value;
-            try {
-                value = Double.parseDouble(matcher.group(1));
-            } catch (NumberFormatException ex) {
-                return false;
-            }
-            String unit = normalizeUnit(matcher.group(2));
-            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit)
-                && approximatelyEqual(candidate.value(), value))) return false;
-        }
-        return true;
+        return allowed;
+    }
+
+    private static String unitOf(OperationReportResult report, String metricName) {
+        String configured = report.metricUnits().get(metricName);
+        if (configured != null) return configured;
+        return report.analysisFacts().metricAnalyses().stream().filter(metric -> metricName.equals(metric.metric()))
+            .map(OperationReportResult.MetricAnalysis::unit).filter(StringUtils::isNotBlank).findFirst().orElse(null);
     }
 
     private static void addMeasurements(Set<MeasurementFact> target, String unit, Double... values) {
@@ -286,6 +309,15 @@ public class OperationReportNarrator {
         StringBuilder knowledge = new StringBuilder(); FaultAnswerGenerator.appendBoundedKnowledge(knowledge, execution); out.put("knowledgeFragments", knowledge.toString());
         out.put("allowedEvidenceCodes", report.evidence().stream().map(OperationReportResult.Evidence::evidenceCode).filter(StringUtils::isNotBlank).toList()); out.put("limitations", report.limitations());
         return out;
+    }
+
+    private static Map<String, Object> repairInput(String rejectionReason, String originalResponse,
+                                                    Map<String, Object> facts) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("rejectionReason", rejectionReason);
+        input.put("originalResponse", originalResponse == null ? "" : originalResponse);
+        input.put("facts", facts);
+        return input;
     }
 
     private record Validation(OperationReportResult.ReportNarrative narrative, String reason) {
