@@ -93,6 +93,30 @@ class TelemetryQueryServiceTest {
     }
 
     @Test
+    void acceptsASevenDayReportWindowAtTheConfiguredMaximum() {
+        LocalDateTime reportEnd = WINDOW_END;
+        LocalDateTime reportStart = reportEnd.minusDays(7);
+        when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(List.of(entity("2026-07-19 14:50:01")));
+
+        service.queryReportTelemetry(DEVICE_ONE, DEVICE_ONE, reportStart, reportEnd);
+
+        verify(realDataMapper).selectTelemetry(eq("real_data_01"), eq(DEVICE_ONE), eq(DEVICE_ONE),
+            eq(reportStart.minusSeconds(properties.getCreateTimeBufferSeconds())),
+            eq(reportEnd.plusSeconds(properties.getCreateTimeBufferSeconds())));
+    }
+
+    @Test
+    void rejectsReportWindowsLongerThanSevenDays() {
+        LocalDateTime reportEnd = WINDOW_END;
+        ServiceException exception = assertThrows(ServiceException.class,
+            () -> service.queryReportTelemetry(DEVICE_ONE, DEVICE_ONE, reportEnd.minusDays(7).minusSeconds(1), reportEnd));
+
+        assertTrue(exception.getMessage().contains("诊断时间范围超过最大允许窗口"));
+        verify(realDataMapper, never()).selectTelemetry(anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
     void usesDefaultTableForUnmappedDevice() {
         when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
             .thenReturn(List.of(entity("2026-07-19 14:50:01")));

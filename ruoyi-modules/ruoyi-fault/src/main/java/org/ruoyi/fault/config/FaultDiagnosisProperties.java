@@ -23,8 +23,8 @@ public class FaultDiagnosisProperties {
     /** 上层未指定时间窗时可采用的默认分钟数；固定查询接口本身仍要求显式起止时间。 */
     private int defaultWindowMinutes = 30;
 
-    /** 单次诊断允许查询的最大分钟数。 */
-    private int maxWindowMinutes = 120;
+    /** 单次诊断或运行报告允许查询的最大分钟数（默认 7 天）。 */
+    private int maxWindowMinutes = 7 * 24 * 60;
 
     /** 设备的标称采样周期，用于理论采样数和缺口计算。 */
     private int nominalSamplingSeconds = 1;
