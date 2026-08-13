@@ -122,8 +122,8 @@ public class TelemetryQueryService {
 
     private QueriedTelemetry loadTelemetry(String deviceName, String inverterName,
                                            LocalDateTime startTime, LocalDateTime endTime) {
-        String normalizedDeviceName = normalizeRequiredText(deviceName, "设备名称不能为空");
-        String normalizedInverterName = normalizeRequiredText(inverterName, "逆变器名称不能为空");
+        String normalizedDeviceName = normalizeAssetIdentifier(deviceName, "设备名称不能为空");
+        String normalizedInverterName = normalizeAssetIdentifier(inverterName, "逆变器名称不能为空");
         validateRequest(normalizedDeviceName, startTime, endTime);
 
         String tableName = resolveTable(normalizedDeviceName);
@@ -169,7 +169,7 @@ public class TelemetryQueryService {
      * 未授权设备不会触达遥测表。
      */
     public String resolveInverterName(String deviceName) {
-        String normalizedDeviceName = normalizeRequiredText(deviceName, "设备名称不能为空");
+        String normalizedDeviceName = normalizeAssetIdentifier(deviceName, "设备名称不能为空");
         if (!properties.isEnabled()) {
             throw new ServiceException("故障诊断功能未启用");
         }
@@ -273,6 +273,44 @@ public class TelemetryQueryService {
             throw new ServiceException(errorMessage);
         }
         return value.trim();
+    }
+
+    /**
+     * 将语音识别、模型输出中常见的中文数字统一为遥测资产使用的阿拉伯数字。
+     * <p>
+     * 白名单校验、表路由和 Mapper 查询都必须使用同一个规范名称；否则例如
+     * {@code G120电机一} 虽指向 {@code G120电机1}，仍会在白名单阶段被误判为未授权。
+     */
+    private String normalizeAssetIdentifier(String value, String errorMessage) {
+        String trimmed = normalizeRequiredText(value, errorMessage);
+        StringBuilder normalized = new StringBuilder(trimmed.length());
+        for (int index = 0; index < trimmed.length(); index++) {
+            char character = trimmed.charAt(index);
+            normalized.append(switch (character) {
+                case '〇', '零' -> '0';
+                case '一' -> '1';
+                case '二', '两' -> '2';
+                case '三' -> '3';
+                case '四' -> '4';
+                case '五' -> '5';
+                case '六' -> '6';
+                case '七' -> '7';
+                case '八' -> '8';
+                case '九' -> '9';
+                case '０' -> '0';
+                case '１' -> '1';
+                case '２' -> '2';
+                case '３' -> '3';
+                case '４' -> '4';
+                case '５' -> '5';
+                case '６' -> '6';
+                case '７' -> '7';
+                case '８' -> '8';
+                case '９' -> '9';
+                default -> character;
+            });
+        }
+        return normalized.toString();
     }
 
     /** 统一遥测数据读取链路的受控查询结果。 */

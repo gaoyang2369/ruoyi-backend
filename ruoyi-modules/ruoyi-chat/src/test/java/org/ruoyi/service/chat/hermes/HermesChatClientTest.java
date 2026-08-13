@@ -10,6 +10,7 @@ import org.ruoyi.config.HermesChatProperties;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesToolProgress;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,17 +25,19 @@ class HermesChatClientTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void streamsOpenAiChunksForwardsToolProgressAndSendsRuoYiManagedHistory() throws Exception {
+    void streamsSafeContentForwardsParsedToolProgressAndSendsRuoYiManagedHistory() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(sse("""
                 : keepalive
 
-                data: {"choices":[{"delta":{"content":"您好"},"finish_reason":null}]}
+                data: {"choices":[{"delta":{"content":"您好<th"},"finish_reason":null}]}
 
                 event: hermes.tool.progress
-                data: {"tool":"ruoyi_fault","status":"running"}
+                data: {"toolName":"query_device_status","status":"running","result":{"secret":"ignore"}}
 
-                data: {"choices":[{"delta":{"content":"，诊断完成"},"finish_reason":"stop"}]}
+                data: {"choices":[{"delta":{"content":"ink>内部推理"},"finish_reason":null}]}
+
+                data: {"choices":[{"delta":{"reasoning_content":"也不能转发","content":"</think>，诊断完成"},"finish_reason":"stop"}]}
 
                 data: [DONE]
 
@@ -43,7 +46,7 @@ class HermesChatClientTest {
 
             HermesChatClient client = client(server);
             List<String> content = new ArrayList<>();
-            List<String> progress = new ArrayList<>();
+            List<HermesToolProgress> progress = new ArrayList<>();
             HermesChatResult result = client.open(List.of(
                 new HermesMessage("system", "仅回答故障诊断问题"),
                 new HermesMessage("user", "上一轮问题"),
@@ -53,7 +56,9 @@ class HermesChatClientTest {
 
             assertEquals("您好，诊断完成", result.content());
             assertEquals(List.of("您好", "，诊断完成"), content);
-            assertEquals(List.of("{\"tool\":\"ruoyi_fault\",\"status\":\"running\"}"), progress);
+            assertEquals(List.of(new HermesToolProgress("query_device_status")), progress);
+            assertFalse(result.content().contains("内部推理"));
+            assertFalse(result.content().contains("think"));
 
             RecordedRequest request = server.takeRequest();
             assertEquals("/v1/chat/completions", request.getPath());
@@ -92,7 +97,7 @@ class HermesChatClientTest {
         return new HermesChatClient(properties, objectMapper);
     }
 
-    private static HermesChatClient.HermesStreamListener listener(List<String> content, List<String> progress) {
+    private static HermesChatClient.HermesStreamListener listener(List<String> content, List<HermesToolProgress> progress) {
         return new HermesChatClient.HermesStreamListener() {
             @Override
             public void onContent(String value) {
@@ -100,7 +105,7 @@ class HermesChatClientTest {
             }
 
             @Override
-            public void onToolProgress(String value) {
+            public void onToolProgress(HermesToolProgress value) {
                 progress.add(value);
             }
         };

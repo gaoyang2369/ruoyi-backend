@@ -17,6 +17,7 @@ import org.ruoyi.common.chat.entity.User;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.chat.service.workFlow.IWorkFlowStarterService;
 import org.ruoyi.common.sse.core.SseEmitterManager;
+import org.ruoyi.common.sse.dto.SseEventDto;
 import org.ruoyi.common.sse.utils.SseMessageUtils;
 import org.ruoyi.domain.enums.agent.AgentExecutionMode;
 import org.ruoyi.domain.enums.agent.AgentScenarioCode;
@@ -29,6 +30,7 @@ import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.chat.hermes.HermesChatClient;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesToolProgress;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.vector.VectorStoreService;
@@ -46,6 +48,7 @@ import java.util.List;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -193,7 +196,7 @@ class ChatServiceFacadeRoutingTest {
         when(hermesChatClient.open(any())).thenReturn(hermesStream);
         when(hermesStream.consume(any())).thenAnswer(invocation -> {
             HermesChatClient.HermesStreamListener listener = invocation.getArgument(0);
-            listener.onToolProgress("{\"tool\":\"ruoyi_fault\",\"status\":\"running\"}");
+            listener.onToolProgress(new HermesToolProgress("query_device_status"));
             listener.onContent("最终诊断回复");
             return new HermesChatResult("最终诊断回复");
         });
@@ -209,6 +212,18 @@ class ChatServiceFacadeRoutingTest {
     }
 
     @Test
+    void hermesToolProgressUsesActualToolNameAndNeverLeaksRawProgressAsResult() {
+        SseEventDto event = ChatServiceFacade.hermesToolProgressEvent(
+            new HermesToolProgress("query_telemetry_statistics"));
+
+        assertEquals("mcp_tool", event.getEvent());
+        assertEquals("{\"toolName\":\"query_telemetry_statistics\",\"status\":\"pending\",\"result\":\"\"}",
+            event.getContent());
+        assertFalse(event.getContent().contains("running"));
+        assertFalse(event.getContent().contains("{\\\"tool\\\""));
+    }
+
+    @Test
     void voiceFaultDiagnosisPublishesSessionSyncEventsWithoutChangingHermesFlow() {
         ChatServiceFacade facade = facade();
         ChatRequest request = request(2L, "请诊断设备");
@@ -219,7 +234,7 @@ class ChatServiceFacadeRoutingTest {
         when(hermesChatClient.open(any())).thenReturn(hermesStream);
         when(hermesStream.consume(any())).thenAnswer(invocation -> {
             HermesChatClient.HermesStreamListener listener = invocation.getArgument(0);
-            listener.onToolProgress("tool running");
+            listener.onToolProgress(new HermesToolProgress("query_device_status"));
             listener.onContent("诊断结果");
             return new HermesChatResult("诊断结果");
         });
@@ -234,7 +249,7 @@ class ChatServiceFacadeRoutingTest {
             ChatSyncEventType.ASSISTANT_DELTA,
             ChatSyncEventType.ASSISTANT_DONE),
             events.getAllValues().stream().map(ChatSyncEvent::type).toList());
-        assertEquals(Arrays.asList("请诊断设备", "tool running", "诊断结果", null),
+        assertEquals(Arrays.asList("请诊断设备", "query_device_status", "诊断结果", null),
             events.getAllValues().stream().map(ChatSyncEvent::content).toList());
         assertEquals("COMPLETED", events.getAllValues().get(3).status());
         assertEquals(List.of("voice-request-1", "voice-request-1", "voice-request-1", "voice-request-1"),

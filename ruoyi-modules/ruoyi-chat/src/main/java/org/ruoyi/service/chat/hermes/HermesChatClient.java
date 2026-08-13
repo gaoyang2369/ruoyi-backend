@@ -71,6 +71,10 @@ public class HermesChatClient {
     public record HermesChatResult(String content) {
     }
 
+    /** A safe, frontend-facing tool progress signal. It deliberately carries no tool output. */
+    public record HermesToolProgress(String toolName) {
+    }
+
     public interface HermesStream {
         HermesChatResult consume(HermesStreamListener listener);
 
@@ -80,7 +84,7 @@ public class HermesChatClient {
     public interface HermesStreamListener {
         void onContent(String content);
 
-        void onToolProgress(String progress);
+        void onToolProgress(HermesToolProgress progress);
     }
 
     /** Exception messages are safe for the frontend and never carry upstream response bodies. */
@@ -142,6 +146,7 @@ public class HermesChatClient {
 
         private HermesChatResult consumeLines(ResponseBody body, HermesStreamListener listener) throws IOException {
             StringBuilder answer = new StringBuilder();
+            ThinkTagFilter thinkTagFilter = new ThinkTagFilter();
             String currentEvent = null;
             try (BufferedReader reader = new BufferedReader(body.charStream())) {
                 String line;
@@ -165,19 +170,50 @@ public class HermesChatClient {
                     }
                     String data = line.substring("data:".length()).trim();
                     if ("hermes.tool.progress".equals(currentEvent)) {
-                        listener.onToolProgress(data);
+                        listener.onToolProgress(parseToolProgress(data));
                         continue;
                     }
                     if ("[DONE]".equals(data)) {
+                        emitVisibleContent(thinkTagFilter.finish(), answer, listener);
                         return new HermesChatResult(answer.toString());
                     }
-                    appendContent(data, answer, listener);
+                    appendContent(data, thinkTagFilter, answer, listener);
                 }
             }
             throw new HermesChatException("Hermes 流式响应异常结束");
         }
 
-        private void appendContent(String data, StringBuilder answer, HermesStreamListener listener) {
+        private HermesToolProgress parseToolProgress(String data) {
+            try {
+                JsonNode root = objectMapper.readTree(data);
+                JsonNode tool = root.path("tool");
+                String toolName = firstText(root, "toolName", "name", "tool");
+                if (tool.isObject()) {
+                    toolName = firstNonBlank(toolName, firstText(tool, "toolName", "name", "tool"));
+                }
+                return new HermesToolProgress(StringUtils.defaultIfBlank(toolName, "Hermes 工具"));
+            } catch (Exception ignored) {
+                // Hermes progress is auxiliary. Never turn its raw payload into user-visible content.
+                return new HermesToolProgress("Hermes 工具");
+            }
+        }
+
+        private String firstText(JsonNode node, String... names) {
+            for (String name : names) {
+                JsonNode value = node.path(name);
+                if (value.isTextual() && StringUtils.isNotBlank(value.asText())) {
+                    return value.asText();
+                }
+            }
+            return null;
+        }
+
+        private String firstNonBlank(String first, String second) {
+            return StringUtils.isNotBlank(first) ? first : second;
+        }
+
+        private void appendContent(String data, ThinkTagFilter thinkTagFilter, StringBuilder answer,
+                                   HermesStreamListener listener) {
             try {
                 JsonNode root = objectMapper.readTree(data);
                 JsonNode choice = root.path("choices").path(0);
@@ -188,14 +224,21 @@ public class HermesChatClient {
                 if (!content.isMissingNode() && !content.isNull()) {
                     String delta = content.asText();
                     if (!delta.isEmpty()) {
-                        answer.append(delta);
-                        listener.onContent(delta);
+                        emitVisibleContent(thinkTagFilter.filter(delta), answer, listener);
                     }
                 }
+                // reasoning_content is intentionally ignored: it is internal reasoning, not assistant text.
             } catch (HermesChatException e) {
                 throw e;
             } catch (Exception e) {
                 throw new HermesChatException("Hermes 流式响应格式错误", e);
+            }
+        }
+
+        private void emitVisibleContent(String content, StringBuilder answer, HermesStreamListener listener) {
+            if (StringUtils.isNotBlank(content)) {
+                answer.append(content);
+                listener.onContent(content);
             }
         }
 
@@ -206,6 +249,64 @@ public class HermesChatClient {
             if (requestCall != null) {
                 requestCall.cancel();
             }
+        }
+    }
+
+    /**
+     * Streaming-safe <think> filter. It retains only a possible tag prefix between chunks,
+     * rather than applying a regex to each chunk and risking leaked partial tags or reasoning.
+     */
+    private static final class ThinkTagFilter {
+        private static final String OPEN = "<think>";
+        private static final String CLOSE = "</think>";
+        private boolean insideThink;
+        private String pending = "";
+
+        String filter(String chunk) {
+            String value = pending + chunk;
+            pending = "";
+            StringBuilder visible = new StringBuilder();
+            while (!value.isEmpty()) {
+                String tag = insideThink ? CLOSE : OPEN;
+                int tagIndex = value.indexOf(tag);
+                if (tagIndex >= 0) {
+                    if (!insideThink) {
+                        visible.append(value, 0, tagIndex);
+                    }
+                    insideThink = !insideThink;
+                    value = value.substring(tagIndex + tag.length());
+                    continue;
+                }
+                int prefixLength = tagPrefixSuffixLength(value, tag);
+                String stable = value.substring(0, value.length() - prefixLength);
+                if (!insideThink) {
+                    visible.append(stable);
+                }
+                pending = value.substring(value.length() - prefixLength);
+                break;
+            }
+            return visible.toString();
+        }
+
+        String finish() {
+            if (insideThink) {
+                pending = "";
+                return "";
+            }
+            String tail = pending;
+            pending = "";
+            // A trailing partial opening tag is never user-facing content.
+            return tagPrefixSuffixLength(tail, OPEN) == tail.length() ? "" : tail;
+        }
+
+        private static int tagPrefixSuffixLength(String value, String tag) {
+            int max = Math.min(value.length(), tag.length() - 1);
+            for (int length = max; length > 0; length--) {
+                if (value.endsWith(tag.substring(0, length))) {
+                    return length;
+                }
+            }
+            return 0;
         }
     }
 

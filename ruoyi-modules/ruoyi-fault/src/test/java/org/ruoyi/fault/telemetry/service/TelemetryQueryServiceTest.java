@@ -83,6 +83,16 @@ class TelemetryQueryServiceTest {
     }
 
     @Test
+    void normalizesChineseNumeralsBeforeAuthorizationRoutingAndQuerying() {
+        when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(List.of(entity("2026-07-19 14:50:01")));
+
+        service.queryTelemetry("G120电机一", "G120电机一", WINDOW_START, WINDOW_END);
+
+        verify(realDataMapper).selectTelemetry(eq("real_data_01"), eq(DEVICE_ONE), eq(DEVICE_ONE), any(), any());
+    }
+
+    @Test
     void usesDefaultTableForUnmappedDevice() {
         when(realDataMapper.selectTelemetry(anyString(), anyString(), anyString(), any(), any()))
             .thenReturn(List.of(entity("2026-07-19 14:50:01")));

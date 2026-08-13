@@ -74,6 +74,7 @@ import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatCancelledExcepti
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesToolProgress;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
@@ -278,12 +279,11 @@ public class ChatServiceFacade implements IChatService {
                     }
 
                     @Override
-                    public void onToolProgress(String progress) {
-                        // Preserve the project's established structured tool event and never append it to assistant text.
-                        SseMessageUtils.sendEvent(userId, org.ruoyi.common.sse.dto.SseEventDto
-                            .mcpTool("ruoyi_fault", "running", progress));
+                    public void onToolProgress(HermesToolProgress progress) {
+                        // Keep the existing mcp_tool SSE contract, but expose only the real tool name and its start state.
+                        SseMessageUtils.sendEvent(userId, hermesToolProgressEvent(progress));
                         publishVoiceSync(chatRequest, ChatSyncEvent.toolProgress(
-                            chatRequest.getSessionId(), chatRequest.getClientRequestId(), progress));
+                            chatRequest.getSessionId(), chatRequest.getClientRequestId(), progress.toolName()));
                     }
                 }).content();
                 completedNormally.set(true);
@@ -314,6 +314,11 @@ public class ChatServiceFacade implements IChatService {
             }
         });
         return chatRequest.getEmitter();
+    }
+
+    static org.ruoyi.common.sse.dto.SseEventDto hermesToolProgressEvent(HermesToolProgress progress) {
+        String toolName = progress == null ? "Hermes 工具" : progress.toolName();
+        return org.ruoyi.common.sse.dto.SseEventDto.mcpTool(toolName, "pending", null);
     }
 
     private static void cancelHermesStream(HermesStream stream, java.util.concurrent.atomic.AtomicBoolean completedNormally) {
