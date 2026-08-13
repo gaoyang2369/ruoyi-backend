@@ -62,6 +62,7 @@ import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.vo.agent.AgentVo;
 import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
 import org.ruoyi.factory.ChatServiceFactory;
+import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.mcp.service.core.LangChain4jMcpToolProviderService;
 import org.ruoyi.mcp.service.core.ToolProviderFactory;
 import org.ruoyi.observability.*;
@@ -75,6 +76,10 @@ import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesToolProgress;
+import org.ruoyi.service.fault.FaultDiagnosisChatService;
+import org.ruoyi.service.fault.FaultRequestPlanner;
+import org.ruoyi.service.fault.model.FaultReportChatResult;
+import org.ruoyi.service.fault.model.FaultRequestPlan;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
@@ -130,6 +135,12 @@ public class ChatServiceFacade implements IChatService {
     private final LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
 
     private final HermesChatClient hermesChatClient;
+
+    private final FaultRequestPlanner faultRequestPlanner;
+
+    private final FaultDiagnosisChatService faultDiagnosisChatService;
+
+    private final FaultDiagnosisProperties faultDiagnosisProperties;
 
     /** 语音请求到 Web Chat 的旁路同步；不参与模型调用或 SSE 生命周期。 */
     private final ChatSyncEventPublisher chatSyncEventPublisher;
@@ -201,10 +212,16 @@ public class ChatServiceFacade implements IChatService {
                 chatRequest.getSessionId()
             );
         }
-        // FAULT_DIAGNOSIS is handled by Hermes and must never fall back to the generic Supervisor.
+        // 明确报告请求由本地确定性链路处理，其余 FAULT_DIAGNOSIS 交给 Hermes；都不回退通用 Supervisor。
         if (isFaultDiagnosisAgent(agentVo)) {
-            // 历史必须在保存本轮用户消息前读取，且当前用户消息始终为 Hermes 请求的最后一条。
             chatRequest.setModel(hermesChatClient.modelName());
+            java.util.Optional<FaultRequestPlan> reportPlan = faultRequestPlanner.planExplicitReportRequest(
+                chatRequest.getContent(), faultDiagnosisProperties.getAllowedAssets());
+            if (reportPlan.isPresent()) {
+                saveUserMessage(chatRequest);
+                return handleDeterministicFaultReportChat(chatRequest, agentVo, tenantId, reportPlan.get());
+            }
+            // 历史必须在保存本轮用户消息前读取，且当前用户消息始终为 Hermes 请求的最后一条。
             List<HermesMessage> messages = buildHermesMessages(chatRequest, agentVo);
             saveUserMessage(chatRequest);
             return handleHermesFaultChat(chatRequest, messages);
@@ -306,6 +323,47 @@ public class ChatServiceFacade implements IChatService {
             } catch (Exception e) {
                 log.error("Hermes 故障诊断执行失败", e);
                 SseMessageUtils.sendError(userId, "Hermes 服务调用失败，请稍后重试");
+                SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));
+            } finally {
+                SseMessageUtils.completeConnection(userId, tokenValue);
+            }
+        });
+        return chatRequest.getEmitter();
+    }
+
+    /** 明确的报告请求在 RuoYi 内完成生成与持久化，并通过专用 SSE 事件附加报告卡片。 */
+    private SseEmitter handleDeterministicFaultReportChat(ChatRequest chatRequest, AgentVo agent,
+                                                          String tenantId, FaultRequestPlan reportPlan) {
+        Long userId = chatRequest.getUserId();
+        String tokenValue = chatRequest.getTokenValue();
+        CompletableFuture.runAsync(() -> {
+            try {
+                FaultReportChatResult result = faultDiagnosisChatService.generateReport(
+                    chatRequest, agent, reportPlan, userId, tenantId);
+                if (StringUtils.isNotBlank(result.content())) {
+                    SseMessageUtils.sendContent(userId, result.content());
+                    publishVoiceSync(chatRequest, ChatSyncEvent.assistantDelta(
+                        chatRequest.getSessionId(), chatRequest.getClientRequestId(), result.content()));
+                    chatMessageService.saveChatMessage(userId, chatRequest.getSessionId(), result.content(),
+                        RoleType.ASSISTANT.getName(), chatRequest.getModel());
+                }
+                if (result.attachment() != null) {
+                    SseMessageUtils.sendEvent(userId,
+                        org.ruoyi.common.sse.dto.SseEventDto.report(result.attachment().toEventData()));
+                }
+                SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "COMPLETED"));
+            } catch (ServiceException e) {
+                SseMessageUtils.sendError(userId, e.getMessage());
+                SseMessageUtils.sendDone(userId);
+                publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
+                    chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));
+            } catch (Exception e) {
+                log.error("确定性运行报告生成失败", e);
+                SseMessageUtils.sendError(userId, "运行报告生成失败，请稍后重试");
                 SseMessageUtils.sendDone(userId);
                 publishVoiceSync(chatRequest, ChatSyncEvent.assistantDone(
                     chatRequest.getSessionId(), chatRequest.getClientRequestId(), "ERROR"));

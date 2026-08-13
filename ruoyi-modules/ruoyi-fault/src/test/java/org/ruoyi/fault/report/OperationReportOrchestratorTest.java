@@ -31,9 +31,11 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -150,6 +152,21 @@ class OperationReportOrchestratorTest {
         assertEquals(ReportHealthStatus.UNKNOWN, result.currentStatus());
         assertTrue(result.metrics().isEmpty());
         assertTrue(result.trends().isEmpty());
+    }
+
+    @Test
+    void repeatedGenerationCreatesIndependentReportCodes() {
+        TelemetryQueryResult telemetry = telemetry(List.of(), List.of());
+        when(telemetryQueryService.queryReportTelemetry(any(), any(), any(), any()))
+            .thenReturn(reportSnapshot(telemetry));
+        when(faultDiagnosisOrchestrator.diagnose(any(DiagnosisCommand.class), any(TelemetryQueryResult.class)))
+            .thenReturn(diagnosis(DiagnosisStatus.NO_EXPLICIT_FAULT));
+
+        OperationReportResult first = orchestrator.generate(command());
+        OperationReportResult second = orchestrator.generate(command());
+
+        assertNotEquals(first.metadata().reportId(), second.metadata().reportId());
+        verify(telemetryQueryService, times(2)).queryReportTelemetry(any(), any(), any(), any());
     }
 
     private ReportHealthStatus statusOf(DiagnosisStatus status) {

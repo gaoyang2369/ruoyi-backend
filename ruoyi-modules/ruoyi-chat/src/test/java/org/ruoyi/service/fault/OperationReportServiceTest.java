@@ -46,6 +46,8 @@ class OperationReportServiceTest {
     private org.ruoyi.common.chat.service.chat.IChatModelService chatModelService;
     @Mock
     private org.ruoyi.factory.ChatServiceFactory chatServiceFactory;
+    @Mock
+    private OperationReportSnapshotService operationReportSnapshotService;
 
     private OperationReportService service;
 
@@ -53,7 +55,7 @@ class OperationReportServiceTest {
     void setUp() {
         service = new OperationReportService(agentService, telemetryQueryService,
             operationReportOrchestrator, operationReportNarrator, chatModelService, chatServiceFactory,
-            new FaultDiagnosisProperties());
+            new FaultDiagnosisProperties(), operationReportSnapshotService);
     }
 
     @Test

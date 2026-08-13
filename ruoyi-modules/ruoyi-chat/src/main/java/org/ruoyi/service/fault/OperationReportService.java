@@ -44,6 +44,7 @@ public class OperationReportService {
     private final IChatModelService chatModelService;
     private final ChatServiceFactory chatServiceFactory;
     private final FaultDiagnosisProperties faultDiagnosisProperties;
+    private final OperationReportSnapshotService operationReportSnapshotService;
 
     public OperationReportResult generate(OperationReportGenerateBo bo, Long userId, String tenantId) {
         AgentVo agent = loadAndValidateAgent(bo.getAgentId());
@@ -54,7 +55,12 @@ public class OperationReportService {
         DiagnosisCommand command = new DiagnosisCommand(deviceName, inverterName, range.start(), range.end(),
             null, agent.getKnowledgeIds() == null ? List.of() : List.copyOf(agent.getKnowledgeIds()),
             new DiagnosisRequestContext(agent.getId(), null, userId, tenantId, UUID.randomUUID().toString()));
-        return operationReportOrchestrator.generate(command);
+        OperationReportResult report = operationReportOrchestrator.generate(command);
+        return operationReportSnapshotService.save(report, bo.getSessionId(), userId, tenantId);
+    }
+
+    public OperationReportResult get(String reportCode, Long userId, String tenantId) {
+        return operationReportSnapshotService.get(reportCode, userId, tenantId);
     }
 
     /** 为已生成的报告撰写 LLM 叙事；Agent 未绑定模型或模型不可用时返回 null（确定性降级）。 */

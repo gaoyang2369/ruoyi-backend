@@ -169,7 +169,8 @@ class MarkdownOperationReportRendererTest {
     void rendererShowsNewMetricsAndStructuredTrendFacts() {
         OperationReportResult base = faultResult();
         OperationReportResult result = new OperationReportResult(base.metadata(), base.asset(), base.period(),
-            base.periodStatus(), base.currentStatus(), base.summary(), base.dataQuality(),
+            base.periodStatus(), base.currentStatus(), base.summary(), base.dataQuality(), base.metricUnits(),
+            base.dataCompleteness(),
             List.of(new OperationReportResult.Metric("dcVoltage", null, 620D, 610D, 630D, 10, null),
                 new OperationReportResult.Metric("currentActual", null, 12D, 10D, 14D, 10, null)),
             List.of(new OperationReportResult.Trend("dcVoltage", List.of(

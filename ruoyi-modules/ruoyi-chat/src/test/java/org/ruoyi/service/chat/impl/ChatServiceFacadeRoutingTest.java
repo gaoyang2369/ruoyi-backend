@@ -3,6 +3,7 @@ package org.ruoyi.service.chat.impl;
 import org.junit.jupiter.api.AfterEach;
 import cn.hutool.extra.spring.SpringUtil;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -31,6 +32,13 @@ import org.ruoyi.service.chat.hermes.HermesChatClient;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesStream;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesToolProgress;
+import org.ruoyi.service.fault.FaultDiagnosisChatService;
+import org.ruoyi.service.fault.FaultRequestPlanner;
+import org.ruoyi.service.fault.model.FaultReportAttachment;
+import org.ruoyi.service.fault.model.FaultReportChatResult;
+import org.ruoyi.service.fault.model.FaultRequestPlan;
+import org.ruoyi.service.fault.model.FaultTaskType;
+import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
 import org.ruoyi.service.vector.VectorStoreService;
@@ -46,6 +54,8 @@ import dev.langchain4j.data.message.UserMessage;
 
 import java.util.List;
 import java.util.Arrays;
+import java.util.Optional;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -61,6 +71,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@Tag("dev")
 class ChatServiceFacadeRoutingTest {
 
     @BeforeAll
@@ -85,6 +96,9 @@ class ChatServiceFacadeRoutingTest {
     @Mock private IAgentService agentService;
     @Mock private LangChain4jMcpToolProviderService langChain4jMcpToolProviderService;
     @Mock private HermesChatClient hermesChatClient;
+    @Mock private FaultRequestPlanner faultRequestPlanner;
+    @Mock private FaultDiagnosisChatService faultDiagnosisChatService;
+    @Mock private FaultDiagnosisProperties faultDiagnosisProperties;
     @Mock private HermesStream hermesStream;
     @Mock private ChatSyncEventPublisher chatSyncEventPublisher;
 
@@ -119,6 +133,29 @@ class ChatServiceFacadeRoutingTest {
         assertEquals(List.of("system", "user", "assistant", "user"),
             messages.getValue().stream().map(HermesChatClient.HermesMessage::role).toList());
         assertEquals("user", messages.getValue().get(messages.getValue().size() - 1).role());
+    }
+
+    @Test
+    void explicitReportUsesDeterministicServiceAndSkipsHermes() {
+        ChatServiceFacade facade = facade();
+        ChatRequest request = request(2L, "请生成G120电机1最近30分钟运行报告");
+        AgentVo agent = faultAgent();
+        FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.GENERATE_REPORT),
+            "G120电机1", null, 30, null, null, List.of(), null, List.of());
+        FaultReportAttachment attachment = new FaultReportAttachment("RP-1", "G120电机1运行报告",
+            "G120电机1", "INV-1", LocalDateTime.of(2026, 8, 13, 10, 0),
+            LocalDateTime.of(2026, 8, 13, 10, 30), "COMPLETED", "NORMAL", "ATTENTION", 0.95D);
+        when(hermesChatClient.modelName()).thenReturn("fault");
+        when(faultRequestPlanner.planExplicitReportRequest(any(), any())).thenReturn(Optional.of(plan));
+        when(faultDiagnosisChatService.generateReport(request, agent, plan, 1L, "tenant-a"))
+            .thenReturn(new FaultReportChatResult("运行报告已生成。", attachment));
+
+        assertSame(request.getEmitter(), facade.handleSpecialChatModes(request, agent, "tenant-a"));
+
+        verify(faultDiagnosisChatService, timeout(1_000)).generateReport(request, agent, plan, 1L, "tenant-a");
+        verify(hermesChatClient, never()).open(any());
+        verify(chatMessageService, timeout(1_000)).saveChatMessage(
+            1L, 2L, "运行报告已生成。", "assistant", "fault");
     }
 
     @Test
@@ -307,7 +344,7 @@ class ChatServiceFacadeRoutingTest {
         return new ChatServiceFacade(chatModelService, chatServiceFactory, knowledgeInfoService, vectorStoreService,
             knowledgeRetrievalService, sseEmitterManager, chatMessageService, workFlowStarterService,
             toolProviderFactory, agentService, langChain4jMcpToolProviderService, hermesChatClient,
-            chatSyncEventPublisher);
+            faultRequestPlanner, faultDiagnosisChatService, faultDiagnosisProperties, chatSyncEventPublisher);
     }
 
     private static ChatRequest request() {

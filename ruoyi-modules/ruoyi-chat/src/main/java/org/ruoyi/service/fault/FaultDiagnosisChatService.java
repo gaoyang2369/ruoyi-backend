@@ -22,7 +22,6 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
-import org.ruoyi.fault.report.MarkdownOperationReportRenderer;
 import org.ruoyi.fault.report.OperationReportOrchestrator;
 import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
@@ -32,6 +31,8 @@ import org.ruoyi.service.fault.model.FaultKnowledgeAnswerDraft;
 import org.ruoyi.service.fault.model.FaultKnowledgeFacts;
 import org.ruoyi.service.fault.model.FaultRequestPlan;
 import org.ruoyi.service.fault.model.FaultTaskType;
+import org.ruoyi.service.fault.model.FaultReportAttachment;
+import org.ruoyi.service.fault.model.FaultReportChatResult;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -62,7 +63,41 @@ public class FaultDiagnosisChatService {
     private final IChatMessageService chatMessageService;
     private final TelemetryQueryService telemetryQueryService;
     private final OperationReportOrchestrator operationReportOrchestrator;
-    private final OperationReportNarrator operationReportNarrator;
+    private final OperationReportSnapshotService operationReportSnapshotService;
+
+    /** 使用门面已识别的报告计划生成一次确定性快照；不会调用 Hermes 或报告叙事模型。 */
+    public FaultReportChatResult generateReport(ChatRequest request, AgentVo agent, FaultRequestPlan reportPlan,
+                                                Long userId, String tenantId) {
+        validateAgent(agent);
+        if (reportPlan == null || !reportPlan.tasks().contains(FaultTaskType.GENERATE_REPORT)) {
+            throw new ServiceException("运行报告计划无效");
+        }
+        String requestId = UUID.randomUUID().toString();
+        NormalizedPlan normalized = normalize(reportPlan, request, agent, userId, tenantId, requestId);
+        if (normalized.clarification() != null) {
+            return new FaultReportChatResult(normalized.clarification(), null);
+        }
+        return createReport(request, normalized.command(), userId, tenantId);
+    }
+
+    private FaultReportChatResult createReport(ChatRequest request, DiagnosisCommand command,
+                                               Long userId, String tenantId) {
+        OperationReportResult report = operationReportOrchestrator.generate(command);
+        operationReportSnapshotService.save(report, request.getSessionId(), userId, tenantId);
+        double completeness = report.dataQuality() == null ? 0D : report.dataQuality().completeness();
+        FaultReportAttachment attachment = new FaultReportAttachment(
+            report.metadata().reportId(),
+            report.asset().deviceName() + "运行报告",
+            report.asset().deviceName(),
+            report.asset().inverterName(),
+            report.period().windowStart(),
+            report.period().windowEnd(),
+            OperationReportSnapshotService.STATUS_COMPLETED,
+            report.currentStatus().name(),
+            report.periodStatus().name(),
+            completeness);
+        return new FaultReportChatResult("运行报告已生成。" + report.summary().conclusion(), attachment);
+    }
 
     /** 仅供结构化兼容测试或内部回退使用，不作为生产聊天入口。 */
     @Deprecated
@@ -80,13 +115,9 @@ public class FaultDiagnosisChatService {
         NormalizedPlan normalized = normalize(plan, request, agent, userId, tenantId, requestId);
         if (normalized.clarification() != null) return normalized.clarification();
 
-        // 运行报告事实层全程确定性；模型只撰写“处理建议”，失败时渲染器回退确定性内容。
-        // 聊天窗口使用精简版，完整版仅经下载接口输出。
+        // 兼容入口同样只返回短结论；完整报告通过持久化快照和 report SSE 事件交付。
         if (normalized.plan().tasks().contains(FaultTaskType.GENERATE_REPORT)) {
-            OperationReportResult report = operationReportOrchestrator.generate(normalized.command());
-            String narrative = operationReportNarrator.narrate(report, model, agent, request.getContent());
-            return MarkdownOperationReportRenderer.renderConcise(
-                report, narrative, faultDiagnosisProperties.getMetricUnits());
+            return createReport(request, normalized.command(), userId, tenantId).content();
         }
 
         DiagnosisResult diagnosis = null;

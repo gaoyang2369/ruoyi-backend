@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -46,6 +47,12 @@ public class FaultRequestPlanner {
         Pattern.compile("\\d{4}\\s*[-/.年]\\s*\\d{1,2}\\s*[-/.月]\\s*\\d{1,2}");
     private static final Pattern FAULT_CODE_SEPARATORS =
         Pattern.compile("[\\s,，、;；/|和及与?？。.!！:：]*");
+    private static final Pattern REPORT_INTENT =
+        Pattern.compile("运行报告|状态报告|设备报告|生成.{0,12}报告|报告.{0,12}(生成|导出|下载|查看|制作)");
+    private static final Pattern RECENT_RANGE =
+        Pattern.compile("(?:最近|近|过去)\\s*(\\d+)\\s*(分钟|小时|天)");
+    private static final Pattern EXPLICIT_DATE_TIME = Pattern.compile(
+        "(\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{2}(?::\\d{2})?)");
     private static final int LOG_RESPONSE_LIMIT = 800;
     private static final String SYSTEM = """
         你是故障诊断请求规划器，不负责诊断或回答。只允许 DIAGNOSE、EXPLAIN_FAULT_CODE、GENERATE_REPORT 三种任务，可拆分复合请求。
@@ -56,6 +63,42 @@ public class FaultRequestPlanner {
         不得输出 SQL、表名、字段名、工具、用户、租户、角色、知识库ID，不得判断根因或编造设备/逆变器；不确定字段写 null。
         """;
     private final ObjectMapper objectMapper;
+
+    /**
+     * 只识别用户明确说出的报告意图，并从受控资产表与显式时间文本中提取参数。
+     * 该快速路径供聊天门面在调用 Hermes 前分流；没有报告意图时返回 empty。
+     */
+    public Optional<FaultRequestPlan> planExplicitReportRequest(String question, List<String> allowedAssets) {
+        if (StringUtils.isBlank(question) || !REPORT_INTENT.matcher(question).find()) {
+            return Optional.empty();
+        }
+        String deviceName = allowedAssets == null ? null : allowedAssets.stream()
+            .filter(StringUtils::isNotBlank)
+            .sorted((left, right) -> Integer.compare(right.length(), left.length()))
+            .filter(question::contains)
+            .findFirst()
+            .orElse(null);
+        Integer recentMinutes = null;
+        Matcher recent = RECENT_RANGE.matcher(question);
+        if (recent.find()) {
+            int amount = Integer.parseInt(recent.group(1));
+            recentMinutes = switch (recent.group(2)) {
+                case "小时" -> Math.multiplyExact(amount, 60);
+                case "天" -> Math.multiplyExact(amount, 24 * 60);
+                default -> amount;
+            };
+        }
+        List<String> times = new ArrayList<>();
+        Matcher explicitTime = EXPLICIT_DATE_TIME.matcher(question);
+        while (explicitTime.find() && times.size() < 2) {
+            String value = explicitTime.group(1);
+            times.add(value.length() == 16 ? value + ":00" : value);
+        }
+        String startTime = times.size() == 2 ? times.get(0) : null;
+        String endTime = times.size() == 2 ? times.get(1) : null;
+        return Optional.of(new FaultRequestPlan(List.of(FaultTaskType.GENERATE_REPORT), deviceName, null,
+            recentMinutes, startTime, endTime, List.of(), null, List.of()));
+    }
 
     public FaultRequestPlan plan(ChatModel chatModel, List<ChatMessage> history, LocalDateTime now, String timezone,
                                  int defaultWindowMinutes, List<String> allowedAssets, String question, String requestId) {

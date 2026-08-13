@@ -7,6 +7,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ResponseFormat;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.service.fault.model.FaultTaskType;
@@ -16,12 +17,14 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+@Tag("dev")
 class FaultRequestPlannerTest {
     @Test
     void parsesCompositePlanAndDropsNonPlanFields() {
@@ -201,6 +204,22 @@ class FaultRequestPlannerTest {
             "问题", "r16");
 
         assertEquals(List.of(FaultTaskType.EXPLAIN_FAULT_CODE, FaultTaskType.DIAGNOSE), plan.tasks());
+    }
+
+    @Test
+    void explicitlyRoutesOperationReportWithoutCallingAModel() {
+        var plan = planner().planExplicitReportRequest(
+            "请生成G120电机1最近2小时运行报告", List.of("G120电机1", "G120电机2")).orElseThrow();
+
+        assertEquals(List.of(FaultTaskType.GENERATE_REPORT), plan.tasks());
+        assertEquals("G120电机1", plan.deviceName());
+        assertEquals(120, plan.recentMinutes());
+    }
+
+    @Test
+    void ordinaryDiagnosisIsNotInterceptedAsReport() {
+        assertTrue(planner().planExplicitReportRequest(
+            "诊断G120电机1最近30分钟是否有报警", List.of("G120电机1")).isEmpty());
     }
 
     private static FaultRequestPlanner planner() { return new FaultRequestPlanner(new ObjectMapper()); }

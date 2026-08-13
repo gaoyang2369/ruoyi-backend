@@ -13,13 +13,14 @@ import org.ruoyi.common.tenant.helper.TenantHelper;
 import org.ruoyi.common.web.core.BaseController;
 import org.ruoyi.domain.bo.fault.OperationReportGenerateBo;
 import org.ruoyi.domain.vo.fault.OperationReportVo;
-import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.report.MarkdownOperationReportRenderer;
 import org.ruoyi.fault.report.OperationReportResult;
+import org.ruoyi.service.fault.OperationReportSnapshotService;
 import org.ruoyi.service.fault.OperationReportService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,8 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
 
 /**
- * 设备运行与状态报告接口：生成（查看）与下载。报告按需实时生成，不落库。
- * 查看返回聊天精简版正文，下载返回含时间线、数据质量与证据链的完整版。
+ * 设备运行与状态报告接口。生成后立即保存完整结构化快照，详情和下载只读取该快照。
  */
 @Validated
 @RestController
@@ -42,28 +42,30 @@ public class OperationReportController extends BaseController {
         DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final OperationReportService operationReportService;
-    private final FaultDiagnosisProperties faultDiagnosisProperties;
 
     @SaCheckPermission("fault:report:query")
     @PostMapping("/generate")
     public R<OperationReportVo> generate(@Valid @RequestBody OperationReportGenerateBo bo) {
         OperationReportResult result = operationReportService.generate(
             bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        String markdown = MarkdownOperationReportRenderer.renderConcise(
-            result, operationReportService.narrate(bo.getAgentId(), result),
-            faultDiagnosisProperties.getMetricUnits());
-        return R.ok(toVo(result, markdown));
+        return R.ok(toVo(result));
+    }
+
+    @SaCheckPermission("fault:report:query")
+    @GetMapping("/{reportCode}")
+    public R<OperationReportVo> detail(@PathVariable String reportCode) {
+        OperationReportResult result = operationReportService.get(
+            reportCode, LoginHelper.getUserId(), TenantHelper.getTenantId());
+        return R.ok(toVo(result));
     }
 
     @SaCheckPermission("fault:report:export")
     @Log(title = "运行报告", businessType = BusinessType.EXPORT)
-    @GetMapping("/download")
-    public void download(@Valid OperationReportGenerateBo bo, HttpServletResponse response) throws IOException {
-        OperationReportResult result = operationReportService.generate(
-            bo, LoginHelper.getUserId(), TenantHelper.getTenantId());
-        String markdown = MarkdownOperationReportRenderer.renderFull(
-            result, operationReportService.narrate(bo.getAgentId(), result),
-            faultDiagnosisProperties.getMetricUnits());
+    @GetMapping("/download/{reportCode}")
+    public void download(@PathVariable String reportCode, HttpServletResponse response) throws IOException {
+        OperationReportResult result = operationReportService.get(
+            reportCode, LoginHelper.getUserId(), TenantHelper.getTenantId());
+        String markdown = MarkdownOperationReportRenderer.renderFull(result, null);
         String filename = "运行报告_" + result.asset().deviceName() + "_"
             + FILENAME_TIME_FORMATTER.format(result.metadata().generatedAt()) + ".md";
         response.setContentType("text/markdown; charset=utf-8");
@@ -72,14 +74,18 @@ public class OperationReportController extends BaseController {
         response.getOutputStream().flush();
     }
 
-    private static OperationReportVo toVo(OperationReportResult result, String markdown) {
+    private static OperationReportVo toVo(OperationReportResult result) {
         OperationReportVo vo = new OperationReportVo();
         vo.setReportCode(result.metadata().reportId());
         vo.setDeviceName(result.asset().deviceName());
         vo.setInverterName(result.asset().inverterName());
-        vo.setHealthStatus(result.overallStatus().name());
+        vo.setHealthStatus(result.periodStatus().name());
+        vo.setPeriodStatus(result.periodStatus().name());
+        vo.setCurrentStatus(result.currentStatus().name());
+        vo.setReportStatus(OperationReportSnapshotService.STATUS_COMPLETED);
         vo.setSummary(result.summary().conclusion());
-        vo.setMarkdown(markdown);
+        vo.setMarkdown(MarkdownOperationReportRenderer.renderFull(result, null));
+        vo.setReport(result);
         vo.setGeneratedAt(result.metadata().generatedAt());
         vo.setRequestedStartTime(result.period().windowStart());
         vo.setRequestedEndTime(result.period().windowEnd());

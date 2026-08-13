@@ -1,11 +1,12 @@
 package org.ruoyi.domain.vo.fault;
 
 import lombok.Data;
+import org.ruoyi.fault.report.OperationReportResult;
 
 import java.time.LocalDateTime;
 
 /**
- * 运行报告接口响应：报告元信息与渲染后的 Markdown 正文。
+ * 运行报告接口响应：元信息、Markdown 与同一份完整结构化快照。
  */
 @Data
 public class OperationReportVo {
@@ -19,11 +20,19 @@ public class OperationReportVo {
     /** 离散健康状态：NORMAL / ATTENTION / FAULT / UNKNOWN。 */
     private String healthStatus;
 
+    private String periodStatus;
+
+    private String currentStatus;
+
+    private String reportStatus;
+
     /** 服务端确定性生成的运行结论段落。 */
     private String summary;
 
     /** 渲染后的完整报告正文。 */
     private String markdown;
+
+    private OperationReportResult report;
 
     private LocalDateTime generatedAt;
 

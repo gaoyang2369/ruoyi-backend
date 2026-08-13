@@ -15,7 +15,9 @@ import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Report V2 的结构化运行报告。
@@ -32,6 +34,8 @@ public record OperationReportResult(
     ReportHealthStatus currentStatus,
     Summary summary,
     DataQualitySummary dataQuality,
+    Map<String, String> metricUnits,
+    List<CompletenessCategory> dataCompleteness,
     List<Metric> metrics,
     List<Trend> trends,
     List<Event> events,
@@ -46,6 +50,8 @@ public record OperationReportResult(
     public static final String REPORT_TYPE = "OPERATION_REPORT_V2";
 
     public OperationReportResult {
+        metricUnits = metricUnits == null ? Map.of() : Map.copyOf(metricUnits);
+        dataCompleteness = dataCompleteness == null ? List.of() : List.copyOf(dataCompleteness);
         metrics = metrics == null ? List.of() : List.copyOf(metrics);
         trends = trends == null ? List.of() : List.copyOf(trends);
         events = events == null ? List.of() : List.copyOf(events);
@@ -69,8 +75,21 @@ public record OperationReportResult(
                                                      Summary summary, TelemetryQueryResult telemetry,
                                                      TelemetryStatisticsResult statistics,
                                                      TelemetrySeriesResult series, DiagnosisResult diagnosis) {
+        return fromSources(reportId, deviceName, inverterName, requestedStart, requestedEnd, generatedAt,
+            periodStatus, summary, telemetry, statistics, series, Map.of(), diagnosis);
+    }
+
+    public static OperationReportResult fromSources(String reportId, String deviceName, String inverterName,
+                                                     LocalDateTime requestedStart, LocalDateTime requestedEnd,
+                                                     LocalDateTime generatedAt, ReportHealthStatus periodStatus,
+                                                     Summary summary, TelemetryQueryResult telemetry,
+                                                     TelemetryStatisticsResult statistics,
+                                                     TelemetrySeriesResult series,
+                                                     Map<String, String> configuredMetricUnits,
+                                                     DiagnosisResult diagnosis) {
         TelemetryQueryResult source = telemetry == null ? emptyTelemetry() : telemetry;
         List<Event> events = eventsOf(source.operation(), source.faultCodes(), source.alarmCodes(), source.statusEvents());
+        List<Metric> metrics = metricsOf(statistics, source.operation());
         return new OperationReportResult(
             new Metadata(reportId, generatedAt, REPORT_TYPE),
             new Asset(deviceName, inverterName),
@@ -80,7 +99,9 @@ public record OperationReportResult(
             currentStatusOf(source, diagnosis, events),
             summary,
             source.quality(),
-            metricsOf(statistics, source.operation()),
+            metricUnitsOf(configuredMetricUnits, metrics),
+            completenessOf(statistics, metrics),
+            metrics,
             trendsOf(series),
             events,
             timelineOf(source.statusEvents()),
@@ -89,6 +110,42 @@ public record OperationReportResult(
             evidenceOf(diagnosis),
             diagnosis == null ? List.of() : diagnosis.limitations(),
             diagnosis);
+    }
+
+    /** 将后端配置中的单位冻结到报告快照；未配置的指标故意不补默认单位。 */
+    private static Map<String, String> metricUnitsOf(Map<String, String> configuredUnits, List<Metric> metrics) {
+        if (configuredUnits == null || configuredUnits.isEmpty() || metrics.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> units = new LinkedHashMap<>();
+        for (Metric metric : metrics) {
+            String unit = configuredUnits.get(metric.metricName());
+            if (unit == null || unit.isBlank()) {
+                unit = configuredUnits.get(metric.metricName().replaceAll("([a-z0-9])([A-Z])", "$1-$2")
+                    .toLowerCase(java.util.Locale.ROOT));
+            }
+            if (unit != null && !unit.isBlank()) {
+                units.put(metric.metricName(), unit.trim());
+            }
+        }
+        return Map.copyOf(units);
+    }
+
+    /** 指标完整率只由同一次统计快照中的真实非空计数计算，不从趋势点反推。 */
+    private static List<CompletenessCategory> completenessOf(TelemetryStatisticsResult statistics,
+                                                              List<Metric> metrics) {
+        if (statistics == null || statistics.sampleCount() <= 0 || metrics.isEmpty()) {
+            return List.of();
+        }
+        int expected = statistics.sampleCount();
+        return metrics.stream()
+            .filter(metric -> metric.count() != null)
+            .map(metric -> {
+                int actual = Math.max(0, Math.min(expected, metric.count()));
+                return new CompletenessCategory(metric.metricName(), expected, actual,
+                    (double) actual / expected);
+            })
+            .toList();
     }
 
     private static ReportHealthStatus currentStatusOf(TelemetryQueryResult telemetry, DiagnosisResult diagnosis,
@@ -279,6 +336,11 @@ public record OperationReportResult(
     }
 
     public record TrendPoint(LocalDateTime timestamp, Double value, long count) {
+    }
+
+    /** 单个真实遥测指标在有效样本中的非空覆盖率。 */
+    public record CompletenessCategory(String categoryName, int expectedCount, int actualCount,
+                                       double completeness) {
     }
 
     /** 一个故障码或报警码在窗口内的聚合事件；sampleHitCount 是包含该代码的遥测样本数。 */

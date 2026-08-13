@@ -51,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
@@ -71,7 +72,7 @@ class FaultDiagnosisChatServiceTest {
     @Mock private IChatMessageService chatMessageService;
     @Mock private org.ruoyi.fault.telemetry.service.TelemetryQueryService telemetryQueryService;
     @Mock private org.ruoyi.fault.report.OperationReportOrchestrator operationReportOrchestrator;
-    @Mock private OperationReportNarrator operationReportNarrator;
+    @Mock private OperationReportSnapshotService operationReportSnapshotService;
     @InjectMocks
     private FaultDiagnosisChatService chatService;
 
@@ -338,7 +339,7 @@ class FaultDiagnosisChatServiceTest {
     }
 
     @Test
-    void generateReportTaskRendersDeterministicMarkdownAndSkipsAnswerGeneration() {
+    void generateReportTaskReturnsShortConclusionPersistsSnapshotAndSkipsAnswerGeneration() {
         FaultRequestPlan plan = new FaultRequestPlan(List.of(FaultTaskType.GENERATE_REPORT), "设备A", null, null,
             null, null, List.of(), null, List.of());
         when(faultDiagnosisProperties.getTimezone()).thenReturn("Asia/Shanghai");
@@ -346,24 +347,15 @@ class FaultDiagnosisChatServiceTest {
         when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
         when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
         when(operationReportOrchestrator.generate(any())).thenReturn(reportResult());
-        when(operationReportNarrator.narrate(any(), any(), any(), any()))
-            .thenReturn("A07089 为报警码，建议检查供电电压[EV-001]。");
         ChatRequest request = new ChatRequest();
         request.setContent("生成设备A今天的运行报告");
         request.setSessionId(9L);
 
         String answer = chatService.diagnose(request, enabledAgent(), org.mockito.Mockito.mock(ChatModel.class), 3L, "tenant-a");
 
-        // 聊天窗口输出精简版：首屏结论与报警卡片，审计信息不出现
-        assertTrue(answer.startsWith("# 设备运行与状态报告"));
-        assertTrue(answer.contains("## 报警 A07089 · 已恢复"));
-        assertTrue(answer.contains("采样命中：30 条记录"));
-        assertTrue(answer.contains("## 处理建议"));
-        assertTrue(answer.contains("A07089 为报警码，建议检查供电电压[EV-001]。"));
-        assertTrue(answer.contains("RP-1"));
-        assertFalse(answer.contains("sha256-digest"));
+        assertEquals("运行报告已生成。报告周期内设备状态：关注。", answer);
         verify(operationReportOrchestrator).generate(any());
-        verify(operationReportNarrator).narrate(any(), any(), any(), any());
+        verify(operationReportSnapshotService).save(any(), eq(9L), eq(3L), eq("tenant-a"));
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
         verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
     }

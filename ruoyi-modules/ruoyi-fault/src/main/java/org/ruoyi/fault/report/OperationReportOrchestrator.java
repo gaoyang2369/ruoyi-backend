@@ -59,6 +59,7 @@ public class OperationReportOrchestrator {
             telemetry,
             reportSnapshot.statistics(),
             reportSnapshot.series(),
+            properties.getMetricUnits(),
             diagnosis);
     }
 

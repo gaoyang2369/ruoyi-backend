@@ -16,6 +16,9 @@ public class OperationReportGenerateBo {
     @NotNull(message = "Agent ID不能为空")
     private Long agentId;
 
+    /** 可选聊天会话；从聊天生成报告时用于关联附件。 */
+    private Long sessionId;
+
     @NotBlank(message = "设备名称不能为空")
     private String deviceName;
 

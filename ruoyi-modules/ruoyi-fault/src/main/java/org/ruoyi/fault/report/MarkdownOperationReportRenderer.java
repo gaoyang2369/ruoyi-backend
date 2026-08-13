@@ -1,9 +1,6 @@
 package org.ruoyi.fault.report;
 
 import org.ruoyi.fault.domain.code.FaultCodeType;
-import org.ruoyi.fault.domain.result.CandidateFault;
-import org.ruoyi.fault.domain.result.DiagnosisResult;
-import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 
 import java.text.DecimalFormat;
@@ -48,6 +45,11 @@ public final class MarkdownOperationReportRenderer {
     private MarkdownOperationReportRenderer() {
     }
 
+    /** 从报告快照本身读取单位，确保渲染与持久化 JSON 使用同一数据源。 */
+    public static String renderConcise(OperationReportResult result, String narrative) {
+        return renderConcise(result, narrative, metricUnitsForDisplay(result));
+    }
+
     /**
      * 渲染聊天/查看窗口的精简版报告。
      *
@@ -77,6 +79,11 @@ public final class MarkdownOperationReportRenderer {
         out.append("\n---\n\n完整明细（事件时间线、数据质量、证据溯源、报告编号 ")
             .append(result.metadata().reportId()).append("）请下载运行报告。\n");
         return out.toString();
+    }
+
+    /** 从报告快照本身读取单位，下载或预览时不再读取实时配置。 */
+    public static String renderFull(OperationReportResult result, String narrative) {
+        return renderFull(result, narrative, metricUnitsForDisplay(result));
     }
 
     /**
@@ -132,7 +139,7 @@ public final class MarkdownOperationReportRenderer {
             }
             appendNoCodesText(out, result);
         } else {
-            Map<String, CandidateFault> candidates = candidateFaultsByCode(result.diagnosisDetail());
+            Map<String, DiagnosisSummary.CodeKnowledgeSummary> candidates = codeKnowledgeByCode(result.diagnosis());
             List<OperationReportResult.Event> all = new ArrayList<>(faults);
             all.addAll(alarms);
             for (int index = 0; index < all.size(); index++) {
@@ -159,7 +166,7 @@ public final class MarkdownOperationReportRenderer {
     }
 
     private static void appendCodeCard(StringBuilder out, OperationReportResult.Event occurrence, FaultCodeType type,
-                                       Map<String, CandidateFault> candidates,
+                                       Map<String, DiagnosisSummary.CodeKnowledgeSummary> candidates,
                                        boolean headingCard, boolean firstCard) {
         String title = type.term() + " " + occurrence.code();
         title += " · " + (occurrence.active() ? "持续中" : "已恢复");
@@ -188,11 +195,12 @@ public final class MarkdownOperationReportRenderer {
             out.append(narrative.trim()).append('\n');
             return;
         }
-        List<CandidateFault> candidates = result.diagnosisDetail() == null ? List.of() : result.diagnosisDetail().candidateFaults();
+        List<DiagnosisSummary.CodeKnowledgeSummary> candidates = result.diagnosis() == null
+            ? List.of() : result.diagnosis().codeKnowledge();
         if (!candidates.isEmpty()) {
             // 知识匹配状态已在代码卡片展示，此处只强调代码类型，避免重复结论
-            for (CandidateFault candidate : candidates) {
-                out.append("- ").append(candidate.faultCode()).append(" 是")
+            for (DiagnosisSummary.CodeKnowledgeSummary candidate : candidates) {
+                out.append("- ").append(candidate.code()).append(" 是")
                     .append(candidate.codeType().term()).append("码。\n");
             }
             out.append("知识库内容仅为资料解释，不能替代对本设备实际参数的核对。\n");
@@ -483,42 +491,31 @@ public final class MarkdownOperationReportRenderer {
         out.append('\n');
     }
 
-    private static Map<String, CandidateFault> candidateFaultsByCode(DiagnosisResult diagnosis) {
-        Map<String, CandidateFault> candidates = new LinkedHashMap<>();
+    private static Map<String, DiagnosisSummary.CodeKnowledgeSummary> codeKnowledgeByCode(
+        DiagnosisSummary diagnosis) {
+        Map<String, DiagnosisSummary.CodeKnowledgeSummary> candidates = new LinkedHashMap<>();
         if (diagnosis == null) {
             return candidates;
         }
-        for (CandidateFault candidate : diagnosis.candidateFaults()) {
-            candidates.putIfAbsent(candidate.faultCode(), candidate);
+        for (DiagnosisSummary.CodeKnowledgeSummary candidate : diagnosis.codeKnowledge()) {
+            candidates.putIfAbsent(candidate.code(), candidate);
         }
         return candidates;
     }
 
-    private static String knowledgeStatusText(CandidateFault candidate) {
+    private static String knowledgeStatusText(DiagnosisSummary.CodeKnowledgeSummary candidate) {
         if (candidate == null) {
             return "未查询";
         }
         return switch (candidate.knowledgeStatus()) {
             case MATCHED -> {
-                String sources = sourceDocuments(candidate.knowledgeEvidence());
+                String sources = String.join("、", candidate.sourceDocuments());
                 yield sources.isEmpty() ? "已匹配" : "已匹配：" + sources;
             }
             case NOT_FOUND -> "未找到知识依据";
             case FAILED -> "知识查询失败";
             case SKIPPED -> "未绑定知识库";
         };
-    }
-
-    private static String sourceDocuments(List<FaultKnowledgeEvidence> evidence) {
-        Set<String> documents = new LinkedHashSet<>();
-        if (evidence != null) {
-            for (FaultKnowledgeEvidence item : evidence) {
-                if (item != null && item.sourceDocument() != null && !item.sourceDocument().isBlank()) {
-                    documents.add(item.sourceDocument());
-                }
-            }
-        }
-        return String.join("、", documents);
     }
 
     private static String unitOf(Map<String, String> metricUnits, String key) {
@@ -530,6 +527,24 @@ public final class MarkdownOperationReportRenderer {
             unit = metricUnits.get(legacyMetricKey(key));
         }
         return unit == null || unit.isBlank() ? null : unit.trim();
+    }
+
+    /**
+     * 新报告渲染必须保留有值但未配置单位的指标，并显式标注缺失；旧三参数入口仍保持兼容语义。
+     */
+    private static Map<String, String> metricUnitsForDisplay(OperationReportResult result) {
+        Map<String, String> units = new LinkedHashMap<>();
+        if (result.metricUnits() != null) {
+            units.putAll(result.metricUnits());
+        }
+        if (result.metrics() != null) {
+            for (OperationReportResult.Metric metric : result.metrics()) {
+                if (metric != null && metric.metricName() != null && unitOf(units, metric.metricName()) == null) {
+                    units.put(metric.metricName(), "单位未配置");
+                }
+            }
+        }
+        return Map.copyOf(units);
     }
 
     private static String legacyMetricKey(String key) {
