@@ -10,6 +10,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
+import org.ruoyi.fault.domain.result.EvidenceReference;
+import org.ruoyi.fault.evidence.enums.EvidenceType;
 import org.ruoyi.fault.report.OperationReportAnalysisService;
 import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.report.ReportHealthStatus;
@@ -150,6 +152,17 @@ class OperationReportNarratorTest {
     }
 
     @Test
+    void acceptsTheMagnitudeOfNegativeBackendDeltaWithoutAllowingOtherMeasurements() {
+        OperationReportResult report = eventComparisonReport();
+        String finding = "A07089 恢复后平均电流为 0.59 A，较报警期间的 0.64 A 降低 0.05 A。";
+        when(hermesChatClient.complete(anyList())).thenReturn(result("{\"operatingFindings\":[\"" + finding + "\"]}"));
+
+        OperationReportResult.ReportNarrative narrative = narrator().narrate(report);
+
+        assertEquals(List.of(finding), narrative.operatingFindings());
+    }
+
+    @Test
     void acceptsMinorDisplayPrecisionDifferenceForBackendDelta() {
         OperationReportResult report = preciseEventComparisonReport();
         String finding = "A07089 报警期间平均电流为 0.641 A，较事件前 0.58 A 升高 0.0614 A。";
@@ -185,6 +198,31 @@ class OperationReportNarratorTest {
         OperationReportResult.ReportNarrative narrative = narrator().narrate(report());
 
         assertEquals(List.of("A07089 已恢复。"), narrative.operatingFindings());
+    }
+
+    @Test
+    void repairsMismatchedEvidenceTypeUsingTheBoundEvidenceFact() {
+        OperationReportResult report = reportWithEvidence();
+        String invalid = "{\"anomalyAnalysis\":[\"依据 EV-003 · KNOWLEDGE，报警未升级为故障。\"]}";
+        String repaired = "{\"anomalyAnalysis\":[\"依据 EV-003 · RULE_RESULT，报警未升级为故障。\"]}";
+        when(hermesChatClient.complete(anyList())).thenReturn(result(invalid), result(repaired));
+
+        OperationReportResult.ReportNarrative narrative = narrator().narrate(report);
+
+        assertEquals(List.of("依据 EV-003 · RULE_RESULT，报警未升级为故障。"), narrative.anomalyAnalysis());
+        ArgumentCaptor<List<HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(hermesChatClient, times(2)).complete(messages.capture());
+        assertTrue(messages.getAllValues().get(1).get(1).content().contains("evidenceType"));
+        assertTrue(messages.getAllValues().get(1).get(1).content().contains("RULE_RESULT"));
+    }
+
+    @Test
+    void repairsNormalRangeJudgmentWithoutBusinessThreshold() {
+        String invalid = "{\"executiveSummary\":\"主要运行参数均记录在正常量程内。\"}";
+        String repaired = "{\"executiveSummary\":\"主要运行参数的观测范围和周期均值见运行解读。\"}";
+        when(hermesChatClient.complete(anyList())).thenReturn(result(invalid), result(repaired));
+
+        assertEquals("主要运行参数的观测范围和周期均值见运行解读。", narrator().narrate(report()).executiveSummary());
     }
 
     @Test
@@ -296,6 +334,17 @@ class OperationReportNarratorTest {
     }
 
     private static OperationReportResult report() {
+        return report(List.of());
+    }
+
+    private static OperationReportResult reportWithEvidence() {
+        return report(List.of(
+            new EvidenceReference(1L, "EV-001", EvidenceType.TELEMETRY, "遥测记录", "已查询遥测", true),
+            new EvidenceReference(2L, "EV-002", EvidenceType.KNOWLEDGE, "手册资料", "已匹配手册", true),
+            new EvidenceReference(3L, "EV-003", EvidenceType.RULE_RESULT, "判断规则", "规则已执行", true)));
+    }
+
+    private static OperationReportResult report(List<EvidenceReference> evidence) {
         LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
         LocalDateTime end = start.plusDays(1);
         TelemetryQueryResult telemetry = new TelemetryQueryResult("设备A", start, end,
@@ -306,7 +355,7 @@ class OperationReportNarratorTest {
             "设备A", "逆变器A", start, end, start, end, false, end.minusMinutes(1), null,
             new DataQualitySummary(10, 10, 0, 0, 0, 1D, true),
             new TelemetryStatistics(10, null, null, null, null, null, null, null, null, null, null, null),
-            List.of(), List.of("A07089"), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+            List.of(), List.of("A07089"), List.of(), List.of(), List.of(), List.of(), List.of(), evidence);
         return OperationReportResult.fromSources("RP-1", "设备A", "逆变器A", start, end, end.plusSeconds(30),
             ReportHealthStatus.ATTENTION,
             new OperationReportResult.Summary("报告周期内设备状态：关注。", List.of(), List.of("A07089"), true),

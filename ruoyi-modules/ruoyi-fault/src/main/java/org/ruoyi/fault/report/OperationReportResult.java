@@ -142,9 +142,23 @@ public record OperationReportResult(
 
     /** 将同一份遥测快照计算出的确定性分析事实合并进报告。 */
     public OperationReportResult withAnalysisFacts(AnalysisFacts analysisFacts) {
+        AnalysisFacts facts = analysisFacts == null ? AnalysisFacts.empty() : analysisFacts;
         return new OperationReportResult(metadata, asset, period, periodStatus, currentStatus, summary,
-            dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, analysisFacts,
+            dataQuality, metricUnits, dataCompleteness, metricsWithCurrentAtWindowEnd(metrics, facts), trends, events, statusTimeline, facts,
             diagnosis, recommendations, evidence, narrative, limitations, diagnosisDetail);
+    }
+
+    /** current 与 endValue 都表示窗口末端的最后一条有效样本，不能混用分钟趋势桶。 */
+    private static List<Metric> metricsWithCurrentAtWindowEnd(List<Metric> metrics, AnalysisFacts analysisFacts) {
+        if (metrics.isEmpty() || analysisFacts.metricAnalyses().isEmpty()) {
+            return metrics;
+        }
+        Map<String, Double> endValues = analysisFacts.metricAnalyses().stream()
+            .filter(metric -> metric.metric() != null && metric.endValue() != null)
+            .collect(java.util.stream.Collectors.toMap(MetricAnalysis::metric, MetricAnalysis::endValue, (left, right) -> right));
+        return metrics.stream().map(metric -> new Metric(metric.metricName(),
+            endValues.getOrDefault(metric.metricName(), metric.current()), metric.average(), metric.minimum(), metric.maximum(),
+            metric.count(), metric.peakAt())).toList();
     }
 
     /** 将后端配置中的单位冻结到报告快照；未配置的指标故意不补默认单位。 */

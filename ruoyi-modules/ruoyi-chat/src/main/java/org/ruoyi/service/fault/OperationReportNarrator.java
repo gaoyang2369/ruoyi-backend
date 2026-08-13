@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,21 +33,25 @@ public class OperationReportNarrator {
     private static final Set<String> RECOMMENDATION_FIELDS = Set.of("priority", "action", "basis");
     private static final Pattern CODE = Pattern.compile("(?i)(?<![A-Z0-9_-])[FA]\\d{3,}(?![A-Z0-9_-])");
     private static final Pattern EVIDENCE = Pattern.compile("(?i)(?<![A-Z0-9_-])EV-\\d+(?![A-Z0-9_-])");
+    private static final Pattern EVIDENCE_REFERENCE = Pattern.compile(
+        "(?i)(?<![A-Z0-9_-])(EV-\\d+)(?:\\s*[·•|/：:]\\s*|\\s+)(TELEMETRY|KNOWLEDGE|RULE_RESULT)(?![A-Z0-9_-])");
     private static final Pattern MEASUREMENT = Pattern.compile(
         "(?i)(?<![\\w.])(-?\\d+(?:\\.\\d+)?)\\s*(V|A|kW|℃|°C|r/min|rpm|伏|安|千瓦|转/分|%)");
     private static final Pattern HEALTH_OR_PROBABILITY = Pattern.compile("(?:健康分|健康度|健康评分|故障概率|概率).{0,8}?\\d+");
+    private static final Pattern UNSUPPORTED_RANGE_JUDGMENT = Pattern.compile("(?:正常(?:量程|范围)|(?:主要运行参数|运行参数|参数).{0,8}正常)");
     private static final String SYSTEM = """
         你处于内部 REPORT_NARRATION 模式。只根据可信 facts 输出一个 JSON 对象，不得调用工具、重算或修改事实。
         只允许字段 executiveSummary、operatingFindings、anomalyAnalysis、recommendations、riskNotice；可选字段可缺失或为 null。
         JSON 结构：executiveSummary 为字符串；operatingFindings、anomalyAnalysis 为字符串数组；recommendations 为
         [{priority:"P1|P2|P3",action:"字符串",basis:["证据或事实依据"]}]；riskNotice 为字符串。
         executiveSummary 写 2 至 3 句；operatingFindings 2 至 4 条；anomalyAnalysis 2 至 4 条；recommendations 2 至 4 条且每条必须有依据；riskNotice 1 至 2 句。不得用大量空字段敷衍。
-        仅可引用 allowedEvidenceCodes；故障/报警码只能来自 events；p/r 参数必须原样来自 knowledgeFragments。
+        证据引用必须原样使用 allowedEvidence 中绑定的“evidenceCode · evidenceType”，不得替换或混用证据类型；故障/报警码只能来自 events；p/r 参数必须原样来自 knowledgeFragments。
         可以引用 facts.metrics、facts.analysisFacts、events 时间和 dataQuality 中真实存在的遥测数值及单位；
         不能生成 facts 中不存在的遥测数值或单位。允许正常的序号、时间描述和段落编号。
         operatingFindings 优先引用本周期主要运行参数的 start/end/delta、range、stdDev、当前值和周期平均值，不自行判断哪些指标波动更明显。
         对每个事件只引用 analysisFacts.eventComparisons 中 before/during/after 的均值及后端提供的差值；可依据差值正负描述升高或降低。
         不得自行做减法、百分比、比例或跨指标计算。没有业务阈值时，不使用“显著、剧烈、稳定、接近、恢复正常”等定性判断。
+        没有设备业务阈值时，不得使用“正常量程、正常范围、参数正常”等判断；只描述观测范围、周期均值、首末值和后端提供的变化值。
         必须区分“观察到同步变化”和“确认因果关系”；没有事实依据时写“未观察到同步变化”或“现有数据不足以确认因果关系”，不得推断根因。
         dataQuality.sufficient 为 false 或事件区间 unavailable 时，说明数据覆盖限制，避免生成趋势结论。
         手册内容只能表述为“可能原因”或“排查方向”，不能写成已确认根因。不能输出 think、Markdown 围栏或解释。
@@ -56,6 +61,7 @@ public class OperationReportNarrator {
         输入包含 rejectionReason、originalResponse 和可信 facts。只修复 originalResponse 为合法 JSON，不重新诊断、不增加新事实。
         去除 think、围栏和未知字段；保留允许字段。operatingFindings/anomalyAnalysis 必须为字符串数组，basis 必须为字符串数组。
         所有故障码、参数、证据、遥测数字和单位必须来自 facts；无法支持的数字应删除或改写为不带数字的事实陈述。
+        证据必须保留 facts 中绑定的“evidenceCode · evidenceType”；修正错误类型，或删除该证据引用。没有业务阈值时，删除“正常量程、正常范围、参数正常”等判断，改为客观观测描述。
         可以保留 facts 中真实存在的遥测数字和单位。只输出 JSON 对象，不能解释；不得加入健康分或故障概率。
         """;
 
@@ -67,8 +73,8 @@ public class OperationReportNarrator {
         FaultExecutionResult execution = new FaultExecutionResult(null, report.diagnosisDetail(), Map.of(), report.limitations());
         String body;
         try {
-            body = hermesChatClient.complete(List.of(new HermesMessage("system", SYSTEM),
-                new HermesMessage("user", objectMapper.writeValueAsString(facts(report, execution))))).content();
+            body = complete(report, "initial", List.of(new HermesMessage("system", SYSTEM),
+                new HermesMessage("user", objectMapper.writeValueAsString(facts(report, execution)))));
         } catch (Exception ex) {
             reject(report, "EMPTY_RESPONSE", null, ex);
             return null;
@@ -77,9 +83,9 @@ public class OperationReportNarrator {
         if (first.narrative() != null) return accept(report, first.narrative());
         reject(report, first.reason(), body, null);
         try {
-            String repaired = hermesChatClient.complete(List.of(new HermesMessage("system", REPAIR_SYSTEM),
+            String repaired = complete(report, "repair", List.of(new HermesMessage("system", REPAIR_SYSTEM),
                 new HermesMessage("user", objectMapper.writeValueAsString(repairInput(first.reason(), body,
-                    facts(report, execution)))))).content();
+                    facts(report, execution))))));
             Validation second = parseAndValidate(repaired, report, execution);
             if (second.narrative() != null) return accept(report, second.narrative());
             reject(report, second.reason(), repaired, null);
@@ -87,6 +93,25 @@ public class OperationReportNarrator {
             reject(report, "JSON_PARSE_FAILED", null, ex);
         }
         return null;
+    }
+
+    /** 仅记录阶段、报告编号和耗时，不写入原始遥测或完整 facts。 */
+    private String complete(OperationReportResult report, String phase, List<HermesMessage> messages) {
+        long startedAt = System.nanoTime();
+        try {
+            String content = hermesChatClient.complete(messages).content();
+            log.info("Hermes 运行报告叙事调用完成: reportCode={}, phase={}, durationMs={}, responseLength={}",
+                report.metadata().reportId(), phase, elapsedMillis(startedAt), content.length());
+            return content;
+        } catch (RuntimeException ex) {
+            log.warn("Hermes 运行报告叙事调用失败: reportCode={}, phase={}, durationMs={}, error={}",
+                report.metadata().reportId(), phase, elapsedMillis(startedAt), ex.toString());
+            throw ex;
+        }
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 
     private OperationReportResult.ReportNarrative accept(OperationReportResult report,
@@ -204,7 +229,9 @@ public class OperationReportNarrator {
             .map(value -> value.toUpperCase(Locale.ROOT)).collect(java.util.stream.Collectors.toSet());
         if (!tokensAllowed(CODE, prose, codes)) return "UNKNOWN_CODE";
         if (!tokensAllowed(EVIDENCE, prose, evidence)) return "UNKNOWN_EVIDENCE";
+        if (!evidenceReferencesAllowed(prose, report.evidence())) return "INVALID_EVIDENCE_REFERENCE";
         if (!TechnicalTokens.valid(prose, technicalTokens(execution))) return "UNKNOWN_PARAMETER";
+        if (UNSUPPORTED_RANGE_JUDGMENT.matcher(prose).find()) return "UNSUPPORTED_QUALITATIVE_JUDGMENT";
         if (firstUnsupportedMeasurement(prose, report) != null || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
         return null;
     }
@@ -220,6 +247,25 @@ public class OperationReportNarrator {
 
     private static boolean tokensAllowed(Pattern pattern, String text, Set<String> allowed) {
         Matcher matcher = pattern.matcher(text); while (matcher.find()) if (!allowed.contains(matcher.group().toUpperCase(Locale.ROOT))) return false; return true;
+    }
+
+    /** 每个证据编号都必须与该持久化证据的真实类型成对出现，避免编号/类型被模型重组。 */
+    private static boolean evidenceReferencesAllowed(String prose, List<OperationReportResult.Evidence> evidence) {
+        Map<String, String> types = new LinkedHashMap<>();
+        for (OperationReportResult.Evidence item : evidence) {
+            if (item != null && StringUtils.isNotBlank(item.evidenceCode()) && item.type() != null) {
+                types.put(item.evidenceCode().toUpperCase(Locale.ROOT), item.type().name());
+            }
+        }
+        Map<Integer, String> references = new LinkedHashMap<>();
+        Matcher paired = EVIDENCE_REFERENCE.matcher(prose);
+        while (paired.find()) references.put(paired.start(1), paired.group(2).toUpperCase(Locale.ROOT));
+        Matcher codes = EVIDENCE.matcher(prose);
+        while (codes.find()) {
+            String expected = types.get(codes.group().toUpperCase(Locale.ROOT));
+            if (expected == null || !expected.equals(references.get(codes.start()))) return false;
+        }
+        return true;
     }
     private static Set<String> technicalTokens(FaultExecutionResult execution) {
         Set<String> result = new LinkedHashSet<>(); execution.knowledgeSources().forEach(source -> { if (source != null) result.addAll(TechnicalTokens.tokensIn(source.content())); }); return result;
@@ -238,8 +284,9 @@ public class OperationReportNarrator {
                 return matcher.group();
             }
             String unit = normalizeUnit(matcher.group(2));
-            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit)
-                && approximatelyEqual(candidate.value(), value))) return matcher.group();
+            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit) && candidate.supports(value))) {
+                return matcher.group();
+            }
         }
         return null;
     }
@@ -251,13 +298,15 @@ public class OperationReportNarrator {
                 metric.minimum(), metric.maximum());
         }
         for (OperationReportResult.MetricAnalysis metric : report.analysisFacts().metricAnalyses()) {
-            addMeasurements(allowed, metric.unit(), metric.startValue(), metric.endValue(), metric.delta(), metric.avg(), metric.min(),
+            addMeasurements(allowed, metric.unit(), metric.startValue(), metric.endValue(), metric.avg(), metric.min(),
                 metric.max(), metric.range(), metric.stdDev());
+            addDeltaMeasurements(allowed, metric.unit(), metric.delta());
         }
         for (OperationReportResult.EventComparison event : report.analysisFacts().eventComparisons()) {
             event.metrics().forEach((metricName, metric) -> addMeasurements(allowed, unitOf(report, metricName),
                 metric.before().avg(), metric.before().min(), metric.before().max(), metric.during().avg(),
-                metric.during().min(), metric.during().max(), metric.after().avg(), metric.after().min(), metric.after().max(),
+                metric.during().min(), metric.during().max(), metric.after().avg(), metric.after().min(), metric.after().max()));
+            event.metrics().forEach((metricName, metric) -> addDeltaMeasurements(allowed, unitOf(report, metricName),
                 metric.duringMinusBeforeAvg(), metric.afterMinusDuringAvg(), metric.afterMinusBeforeAvg()));
         }
         if (report.dataQuality() != null) addMeasurements(allowed, "%", report.dataQuality().completeness() * 100D);
@@ -274,7 +323,21 @@ public class OperationReportNarrator {
     private static void addMeasurements(Set<MeasurementFact> target, String unit, Double... values) {
         String normalizedUnit = normalizeUnit(unit);
         if (normalizedUnit == null) return;
-        for (Double value : values) if (value != null && Double.isFinite(value)) target.add(new MeasurementFact(normalizedUnit, value));
+        for (Double value : values) if (value != null && Double.isFinite(value)) {
+            target.add(new MeasurementFact(normalizedUnit, value, false));
+        }
+    }
+
+    /**
+     * Delta 是后端确定性事实。负 delta 可以原样引用，也可按中文“降低 X 单位”的幅度形式引用；
+     * 该能力由字段来源标记，而不是为任意数值或某个具体数值放开白名单。
+     */
+    private static void addDeltaMeasurements(Set<MeasurementFact> target, String unit, Double... values) {
+        String normalizedUnit = normalizeUnit(unit);
+        if (normalizedUnit == null) return;
+        for (Double value : values) if (value != null && Double.isFinite(value)) {
+            target.add(new MeasurementFact(normalizedUnit, value, true));
+        }
     }
 
     private static String normalizeUnit(String unit) {
@@ -307,8 +370,17 @@ public class OperationReportNarrator {
             return item;
         }).toList());
         StringBuilder knowledge = new StringBuilder(); FaultAnswerGenerator.appendBoundedKnowledge(knowledge, execution); out.put("knowledgeFragments", knowledge.toString());
-        out.put("allowedEvidenceCodes", report.evidence().stream().map(OperationReportResult.Evidence::evidenceCode).filter(StringUtils::isNotBlank).toList()); out.put("limitations", report.limitations());
+        out.put("allowedEvidence", report.evidence().stream().filter(item -> item != null && StringUtils.isNotBlank(item.evidenceCode()))
+            .map(item -> evidenceFact(item)).toList()); out.put("limitations", report.limitations());
         return out;
+    }
+
+    private static Map<String, Object> evidenceFact(OperationReportResult.Evidence evidence) {
+        Map<String, Object> fact = new LinkedHashMap<>();
+        fact.put("evidenceId", evidence.evidenceId());
+        fact.put("evidenceCode", evidence.evidenceCode());
+        fact.put("evidenceType", evidence.type() == null ? null : evidence.type().name());
+        return fact;
     }
 
     private static Map<String, Object> repairInput(String rejectionReason, String originalResponse,
@@ -325,6 +397,10 @@ public class OperationReportNarrator {
         static Validation reject(String reason) { return new Validation(null, reason); }
     }
 
-    private record MeasurementFact(String unit, double value) {
+    private record MeasurementFact(String unit, double value, boolean delta) {
+        boolean supports(double displayedValue) {
+            return approximatelyEqual(value, displayedValue)
+                || delta && value < 0D && approximatelyEqual(-value, displayedValue);
+        }
     }
 }

@@ -16,6 +16,7 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.telemetry.model.CodeOccurrence;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.OperationStatistics;
+import org.ruoyi.fault.telemetry.model.ReportTelemetrySample;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
@@ -111,6 +112,26 @@ class OperationReportOrchestratorTest {
         assertEquals(1450D, metric(result, "speedActual").average());
         assertEquals(2, result.trends().get(0).points().size());
         assertTrue(result.metadata().generatedAt() != null);
+    }
+
+    @Test
+    void alignsCurrentValuesWithAnalysisEndValuesFromTheLastValidSamples() {
+        TelemetryQueryResult telemetry = telemetry(List.of(), List.of());
+        TelemetryReportSnapshot base = reportSnapshot(telemetry);
+        LocalDateTime start = telemetry.startTime();
+        TelemetryReportSnapshot snapshot = new TelemetryReportSnapshot(telemetry, base.statistics(), base.series(), List.of(
+            new ReportTelemetrySample(start, metricsAt(610D, 10D, 1400D, 2D, 40D, 30D, 60D, 55D)),
+            new ReportTelemetrySample(start.plusMinutes(29), metricsAt(611D, 11D, 780.442D, 3D, 41D, 31D, 61D, 56D))));
+        when(telemetryQueryService.queryReportTelemetry(any(), any(), any(), any())).thenReturn(snapshot);
+        when(faultDiagnosisOrchestrator.diagnose(any(DiagnosisCommand.class), any(TelemetryQueryResult.class)))
+            .thenReturn(diagnosis(DiagnosisStatus.NO_EXPLICIT_FAULT));
+
+        OperationReportResult result = orchestrator.generate(command());
+
+        for (OperationReportResult.MetricAnalysis analysis : result.analysisFacts().metricAnalyses()) {
+            assertEquals(analysis.endValue(), metric(result, analysis.metric()).current());
+        }
+        assertEquals(780.442D, metric(result, "speedActual").current());
     }
 
     @Test
@@ -236,6 +257,14 @@ class OperationReportOrchestratorTest {
 
     private static OperationReportResult.Metric metric(OperationReportResult result, String name) {
         return result.metrics().stream().filter(metric -> metric.metricName().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static Map<String, Double> metricsAt(double voltage, double current, double speed, double power,
+                                                  double motorTemp, double inverterTemp, double motorLoad,
+                                                  double inverterLoad) {
+        return Map.of("dcVoltage", voltage, "currentActual", current, "speedActual", speed, "actualPower", power,
+            "motorTemp", motorTemp, "inverterTemp", inverterTemp, "motorLoadRate", motorLoad,
+            "inverterLoadRate", inverterLoad);
     }
 
 }
