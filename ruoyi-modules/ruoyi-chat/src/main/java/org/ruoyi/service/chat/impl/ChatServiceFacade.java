@@ -90,6 +90,7 @@ import org.ruoyi.websocket.chat.sync.ChatSyncEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -571,7 +572,17 @@ public class ChatServiceFacade implements IChatService {
      */
     private ShellSkills buildShellSkills(AgentVo agentVo) {
         java.nio.file.Path skillsPath = SkillsPathResolver.resolveSkillsPath();
-        List<FileSystemSkill> skillsList = FileSystemSkillLoader.loadSkills(skillsPath);
+        if (!Files.isDirectory(skillsPath)) {
+            log.warn("Skills 目录不存在，跳过 SkillsAgent: {}", skillsPath);
+            return null;
+        }
+        List<FileSystemSkill> skillsList;
+        try {
+            skillsList = FileSystemSkillLoader.loadSkills(skillsPath);
+        } catch (RuntimeException e) {
+            log.warn("加载 Skills 失败，跳过 SkillsAgent: {}", skillsPath, e);
+            return null;
+        }
         if (skillsList == null || skillsList.isEmpty()) {
             return null;
         }
