@@ -11,6 +11,8 @@ import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
 import org.ruoyi.service.fault.model.FaultExecutionResult;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -30,7 +32,7 @@ public class OperationReportNarrator {
 
     private static final Set<String> NARRATIVE_FIELDS = Set.of("executiveSummary", "operatingFindings",
         "anomalyAnalysis", "recommendations", "riskNotice");
-    private static final Set<String> RECOMMENDATION_FIELDS = Set.of("priority", "action", "basis");
+    private static final Set<String> RECOMMENDATION_FIELDS = Set.of("priority", "action", "basis", "steps");
     private static final Pattern CODE = Pattern.compile("(?i)(?<![A-Z0-9_-])[FA]\\d{3,}(?![A-Z0-9_-])");
     private static final Pattern EVIDENCE = Pattern.compile("(?i)(?<![A-Z0-9_-])EV-\\d+(?![A-Z0-9_-])");
     private static final Pattern EVIDENCE_REFERENCE = Pattern.compile(
@@ -43,17 +45,15 @@ public class OperationReportNarrator {
         你处于内部 REPORT_NARRATION 模式。只根据可信 facts 输出一个 JSON 对象，不得调用工具、重算或修改事实。
         只允许字段 executiveSummary、operatingFindings、anomalyAnalysis、recommendations、riskNotice；可选字段可缺失或为 null。
         JSON 结构：executiveSummary 为字符串；operatingFindings、anomalyAnalysis 为字符串数组；recommendations 为
-        [{priority:"P1|P2|P3",action:"字符串",basis:["证据或事实依据"]}]；riskNotice 为字符串。
-        executiveSummary 写 2 至 3 句；operatingFindings 2 至 4 条；anomalyAnalysis 2 至 4 条；recommendations 2 至 4 条且每条必须有依据；riskNotice 1 至 2 句。不得用大量空字段敷衍。
+        [{priority:"P1|P2|P3",action:"字符串",basis:["证据或事实依据"],steps:["可选执行步骤"]}]；riskNotice 为字符串。
         证据引用必须原样使用 allowedEvidence 中绑定的“evidenceCode · evidenceType”，不得替换或混用证据类型；故障/报警码只能来自 events；p/r 参数必须原样来自 knowledgeFragments。
         可以引用 facts.metrics、facts.analysisFacts、events 时间和 dataQuality 中真实存在的遥测数值及单位；
         不能生成 facts 中不存在的遥测数值或单位。允许正常的序号、时间描述和段落编号。
-        operatingFindings 优先引用本周期主要运行参数的 start/end/delta、range、stdDev、当前值和周期平均值，不自行判断哪些指标波动更明显。
-        对每个事件只引用 analysisFacts.eventComparisons 中 before/during/after 的均值及后端提供的差值；可依据差值正负描述升高或降低。
+        这是兼容回退，不规定必须写哪些统计量、如何组织运行解读或处理建议；dataQuality.sufficient 为 true 时无需主动描述完整率。
         不得自行做减法、百分比、比例或跨指标计算。没有业务阈值时，不使用“显著、剧烈、稳定、接近、恢复正常”等定性判断。
         没有设备业务阈值时，不得使用“正常量程、正常范围、参数正常”等判断；只描述观测范围、周期均值、首末值和后端提供的变化值。
         必须区分“观察到同步变化”和“确认因果关系”；没有事实依据时写“未观察到同步变化”或“现有数据不足以确认因果关系”，不得推断根因。
-        dataQuality.sufficient 为 false 或事件区间 unavailable 时，说明数据覆盖限制，避免生成趋势结论。
+        dataQuality.sufficient 为 false 或事件区间 unavailable 时，可说明数据覆盖限制，避免生成趋势结论。
         手册内容只能表述为“可能原因”或“排查方向”，不能写成已确认根因。不能输出 think、Markdown 围栏或解释。
         """;
     private static final String REPAIR_SYSTEM = """
@@ -93,6 +93,17 @@ public class OperationReportNarrator {
             reject(report, "JSON_PARSE_FAILED", null, ex);
         }
         return null;
+    }
+
+    /** finalize 阶段复用与兼容回退相同的事实校验，不再触发 Hermes 或重新查询遥测。 */
+    public void validateNarrative(OperationReportResult report, OperationReportResult.ReportNarrative narrative) {
+        FaultExecutionResult execution = new FaultExecutionResult(null, report.diagnosisDetail(), Map.of(), report.limitations());
+        String reason = validityReason(narrative, report, execution);
+        if (reason != null) {
+            String token = "UNKNOWN_PARAMETER".equals(reason) ? firstUnsupportedTechnicalToken(narrative, report) : null;
+            throw new org.ruoyi.common.core.exception.ServiceException("运行报告叙事校验失败: " + reason
+                + (token == null ? "" : " (" + token + ")"));
+        }
     }
 
     /** 仅记录阶段、报告编号和耗时，不写入原始遥测或完整 facts。 */
@@ -188,8 +199,10 @@ public class OperationReportNarrator {
             var recommendationNames = item.fieldNames();
             while (recommendationNames.hasNext()) if (!RECOMMENDATION_FIELDS.contains(recommendationNames.next())) return "UNKNOWN_FIELD";
             if (!textOrNull(item.path("priority")) || !textOrNull(item.path("action"))) return "INVALID_FIELD_TYPE";
-            JsonNode basis = item.path("basis");
-            if (!basis.isMissingNode() && !basis.isNull() && !basis.isTextual() && !strings(basis)) return "INVALID_FIELD_TYPE";
+            for (String name : List.of("basis", "steps")) {
+                JsonNode value = item.path(name);
+                if (!value.isMissingNode() && !value.isNull() && !value.isTextual() && !strings(value)) return "INVALID_FIELD_TYPE";
+            }
         }
         return null;
     }
@@ -201,7 +214,7 @@ public class OperationReportNarrator {
         List<OperationReportResult.NarrativeRecommendation> recommendations = new ArrayList<>();
         JsonNode entries = root.path("recommendations");
         if (entries.isArray()) for (JsonNode item : entries) recommendations.add(new OperationReportResult.NarrativeRecommendation(
-            text(item, "priority"), text(item, "action"), values(item.path("basis"))));
+            text(item, "priority"), text(item, "action"), values(item.path("basis")), values(item.path("steps"))));
         return new OperationReportResult.ReportNarrative(text(root, "executiveSummary"), values(root.path("operatingFindings")),
             values(root.path("anomalyAnalysis")), recommendations, text(root, "riskNotice"));
     }
@@ -230,9 +243,25 @@ public class OperationReportNarrator {
         if (!tokensAllowed(CODE, prose, codes)) return "UNKNOWN_CODE";
         if (!tokensAllowed(EVIDENCE, prose, evidence)) return "UNKNOWN_EVIDENCE";
         if (!evidenceReferencesAllowed(prose, report.evidence())) return "INVALID_EVIDENCE_REFERENCE";
-        if (!TechnicalTokens.valid(prose, technicalTokens(execution))) return "UNKNOWN_PARAMETER";
+        if (!TechnicalTokens.valid(prose, allowedTechnicalTokens(report, execution))) return "UNKNOWN_PARAMETER";
         if (UNSUPPORTED_RANGE_JUDGMENT.matcher(prose).find()) return "UNSUPPORTED_QUALITATIVE_JUDGMENT";
         if (firstUnsupportedMeasurement(prose, report) != null || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
+        return null;
+    }
+
+    private static Set<String> allowedTechnicalTokens(OperationReportResult report, FaultExecutionResult execution) {
+        Set<String> result = new LinkedHashSet<>(technicalTokens(execution));
+        if (report.diagnosis() != null) result.addAll(report.diagnosis().allowedTechnicalTokens());
+        return result;
+    }
+
+    private static String firstUnsupportedTechnicalToken(OperationReportResult.ReportNarrative narrative,
+                                                          OperationReportResult report) {
+        String prose = String.join("\n", narrativeText(narrative));
+        Set<String> allowed = allowedTechnicalTokens(report,
+            new FaultExecutionResult(null, report.diagnosisDetail(), Map.of(), report.limitations()));
+        Matcher matcher = Pattern.compile("(?i)(?<![A-Z0-9_])([pr]\\d+(?:\\.\\d+)?)(?![A-Z0-9_])").matcher(prose);
+        while (matcher.find()) if (!allowed.contains(matcher.group(1).toLowerCase(Locale.ROOT))) return matcher.group(1);
         return null;
     }
 
@@ -241,7 +270,9 @@ public class OperationReportNarrator {
         if (narrative.executiveSummary() != null) text.add(narrative.executiveSummary());
         text.addAll(narrative.operatingFindings()); text.addAll(narrative.anomalyAnalysis());
         if (narrative.riskNotice() != null) text.add(narrative.riskNotice());
-        for (OperationReportResult.NarrativeRecommendation item : narrative.recommendations()) { text.add(item.action()); text.addAll(item.basis()); }
+        for (OperationReportResult.NarrativeRecommendation item : narrative.recommendations()) {
+            text.add(item.action()); text.addAll(item.basis()); text.addAll(item.steps());
+        }
         return text;
     }
 
@@ -284,7 +315,8 @@ public class OperationReportNarrator {
                 return matcher.group();
             }
             String unit = normalizeUnit(matcher.group(2));
-            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit) && candidate.supports(value))) {
+            int scale = decimalPlaces(matcher.group(1));
+            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit) && candidate.supports(value, scale))) {
                 return matcher.group();
             }
         }
@@ -350,8 +382,9 @@ public class OperationReportNarrator {
         };
     }
 
-    private static boolean approximatelyEqual(double left, double right) {
-        return Math.abs(left - right) <= Math.max(0.001D, Math.max(Math.abs(left), Math.abs(right)) * 1E-6D);
+    private static int decimalPlaces(String numericText) {
+        int decimal = numericText.indexOf('.');
+        return decimal < 0 ? 0 : numericText.length() - decimal - 1;
     }
 
     /** 仅传报告快照中的精简事实；不传原始遥测或完整趋势点。 */
@@ -398,9 +431,16 @@ public class OperationReportNarrator {
     }
 
     private record MeasurementFact(String unit, double value, boolean delta) {
-        boolean supports(double displayedValue) {
-            return approximatelyEqual(value, displayedValue)
-                || delta && value < 0D && approximatelyEqual(-value, displayedValue);
+        boolean supports(double displayedValue, int scale) {
+            return roundedEquals(value, displayedValue, scale)
+                || delta && value < 0D && roundedEquals(-value, displayedValue, scale);
+        }
+
+        /** 按模型给出的精度比较，避免要求 Hermes 原样复制后端的小数位。 */
+        private static boolean roundedEquals(double factValue, double displayedValue, int scale) {
+            BigDecimal roundedFact = BigDecimal.valueOf(factValue).setScale(scale, RoundingMode.HALF_UP);
+            BigDecimal displayed = BigDecimal.valueOf(displayedValue).setScale(scale, RoundingMode.HALF_UP);
+            return roundedFact.compareTo(displayed) == 0;
         }
     }
 }

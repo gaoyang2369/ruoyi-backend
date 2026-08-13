@@ -36,7 +36,8 @@ class MarkdownOperationReportRendererTest {
         assertTrue(markdown.startsWith("# 设备运行与状态报告"));
         assertTrue(markdown.contains("**设备：G120电机1 · 逆变器：INV-1 · 状态：故障**"));
         assertTrue(markdown.contains("## 故障 F30005 · 持续中"));
-        assertTrue(markdown.contains("- 采样命中：3 条记录"));
+        // 多个 episode 共用窗口级 occurrence 时，不将窗口总命中数错误归属到某一 episode。
+        assertTrue(markdown.contains("- 采样命中：0 条记录"));
         assertTrue(markdown.contains("- 手册匹配：已匹配：G120故障手册"));
         assertTrue(markdown.contains("## 处理建议"));
         assertTrue(markdown.contains("1. 检查负载"));
@@ -127,9 +128,10 @@ class MarkdownOperationReportRendererTest {
     void fullKeepsAuditInfoMetadataTimelineAndEvidence() {
         String markdown = MarkdownOperationReportRenderer.renderFull(faultResult(), null, Map.of());
 
-        for (int section = 1; section <= 9; section++) {
+        for (int section : List.of(1, 2, 3, 4, 5, 6, 8, 9)) {
             assertTrue(markdown.contains("## " + section + ". "), "缺少章节 " + section);
         }
+        assertFalse(markdown.contains("## 7. 数据质量"));
         assertTrue(markdown.contains("RP-1"));
         assertTrue(markdown.contains("sha256-digest"));
         assertTrue(markdown.contains("运行指标单位尚未确认，暂不展示。"));

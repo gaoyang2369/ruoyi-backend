@@ -226,7 +226,7 @@ public class ChatServiceFacade implements IChatService {
             // 历史必须在保存本轮用户消息前读取，且当前用户消息始终为 Hermes 请求的最后一条。
             List<HermesMessage> messages = buildHermesMessages(chatRequest, agentVo);
             saveUserMessage(chatRequest);
-            return handleHermesFaultChat(chatRequest, messages);
+            return handleHermesFaultChat(chatRequest, agentVo, tenantId, messages);
         }
         // 模式2：智能体对话（默认走 Supervisor 多 Agent 编排）
         prepareGeneralAgentChat(chatRequest, agentVo);
@@ -268,12 +268,14 @@ public class ChatServiceFacade implements IChatService {
      * Hermes owns Agent inference and the ruoyi_fault tool; RuoYi only owns history,
      * persistence and its established frontend SSE protocol.
      */
-    private SseEmitter handleHermesFaultChat(ChatRequest chatRequest, List<HermesMessage> messages) {
+    private SseEmitter handleHermesFaultChat(ChatRequest chatRequest, AgentVo agent, String tenantId,
+                                             List<HermesMessage> messages) {
         Long userId = chatRequest.getUserId();
         String tokenValue = chatRequest.getTokenValue();
         HermesStream stream;
         try {
-            stream = hermesChatClient.open(messages);
+            stream = hermesChatClient.open(messages, new HermesChatClient.HermesRequestContext(
+                agent == null ? null : agent.getId(), chatRequest.getSessionId(), userId, tenantId));
         } catch (HermesChatException e) {
             SseMessageUtils.sendError(userId, e.getMessage());
             SseMessageUtils.sendDone(userId);

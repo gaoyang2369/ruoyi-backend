@@ -84,10 +84,8 @@ public class OperationReportOrchestrator {
             case UNKNOWN -> out.append("有效数据中未观测到显式故障码或报警码，但数据不足，无法确认整个周期不存在故障或报警。");
         }
         DataQualitySummary quality = telemetry.quality();
-        if (quality != null) {
-            out.append("数据完整率 ")
-                .append(String.format(Locale.ROOT, "%.1f%%", quality.completeness() * 100))
-                .append("（有效样本 ").append(quality.validRecordCount()).append(" 条）。");
+        if (quality != null && !quality.sufficient()) {
+            out.append("数据覆盖不足，趋势判断仅供参考。");
         }
         if (telemetry.fallbackToLatestData()) {
             out.append("请求窗口无数据，已改用最近可用数据窗口，本结果为历史数据分析");

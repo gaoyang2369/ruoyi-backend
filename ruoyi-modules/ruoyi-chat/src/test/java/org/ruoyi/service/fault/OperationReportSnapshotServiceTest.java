@@ -74,6 +74,7 @@ class OperationReportSnapshotServiceTest {
         when(mapper.selectOne(any())).thenReturn(entity.getValue());
         OperationReportResult restored = service.get("RP-100", 7L, "tenant-a");
         assertEquals(report, restored);
+        assertEquals(List.of("p0100"), restored.diagnosis().allowedTechnicalTokens());
     }
 
     @Test
@@ -112,6 +113,41 @@ class OperationReportSnapshotServiceTest {
         assertEquals("运行报告编号已存在", error.getMessage());
     }
 
+    @Test
+    void finalizeUpdatesThePreparedSnapshotWithoutCreatingAnotherReport() {
+        OperationReportResult prepared = report("RP-FINALIZE").withNarrative(null);
+        when(mapper.insert(any(OperationReportSnapshot.class))).thenReturn(1);
+        service.prepare(prepared, 9L, 7L, "tenant-a");
+        ArgumentCaptor<OperationReportSnapshot> inserted = ArgumentCaptor.forClass(OperationReportSnapshot.class);
+        verify(mapper).insert(inserted.capture());
+        assertEquals(OperationReportSnapshotService.STATUS_PREPARED, inserted.getValue().getReportStatus());
+
+        when(mapper.selectOne(any())).thenReturn(inserted.getValue());
+        when(mapper.updateById(any(OperationReportSnapshot.class))).thenReturn(1);
+        OperationReportResult.ReportNarrative narrative = new OperationReportResult.ReportNarrative(
+            "Hermes 生成的摘要", List.of(), List.of(), List.of(), null);
+
+        OperationReportResult finalized = service.finalize("RP-FINALIZE", narrative, 7L, "tenant-a");
+
+        assertEquals("Hermes 生成的摘要", finalized.narrative().executiveSummary());
+        ArgumentCaptor<OperationReportSnapshot> updated = ArgumentCaptor.forClass(OperationReportSnapshot.class);
+        verify(mapper).updateById(updated.capture());
+        assertEquals(OperationReportSnapshotService.STATUS_COMPLETED, updated.getValue().getReportStatus());
+        assertTrue(updated.getValue().getReportJson().contains("Hermes 生成的摘要"));
+    }
+
+    @Test
+    void recommendationStepsAreRetainedInTheNarrativeSnapshot() throws Exception {
+        OperationReportResult.ReportNarrative narrative = new OperationReportResult.ReportNarrative(null, List.of(), List.of(),
+            List.of(new OperationReportResult.NarrativeRecommendation("P2", "核对单位制", List.of("EV-002"),
+                List.of("记录当前参数", "调整后观察是否复现"))), null);
+
+        OperationReportResult.ReportNarrative restored = objectMapper.readValue(objectMapper.writeValueAsString(narrative),
+            OperationReportResult.ReportNarrative.class);
+
+        assertEquals(List.of("记录当前参数", "调整后观察是否复现"), restored.recommendations().get(0).steps());
+    }
+
     private static OperationReportResult report(String reportCode) {
         LocalDateTime start = LocalDateTime.of(2026, 8, 13, 10, 0);
         LocalDateTime end = start.plusMinutes(30);
@@ -123,7 +159,7 @@ class OperationReportSnapshotServiceTest {
         DiagnosisSummary diagnosis = new DiagnosisSummary(DiagnosisStatus.DATA_INSUFFICIENT,
             List.of(), List.of(), List.of(), true, List.of(),
             List.of(new DiagnosisSummary.CodeKnowledgeSummary("A07089", FaultCodeType.ALARM,
-                KnowledgeLookupStatus.MATCHED, List.of("manual.pdf"))));
+                KnowledgeLookupStatus.MATCHED, List.of("manual.pdf"))), List.of("p0100"));
         return new OperationReportResult(base.metadata(), base.asset(), base.period(), base.periodStatus(),
             base.currentStatus(), base.summary(), base.dataQuality(), base.metricUnits(), base.dataCompleteness(),
             base.metrics(), base.trends(), base.events(), base.statusTimeline(), diagnosis, base.recommendations(),

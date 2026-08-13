@@ -415,20 +415,19 @@ public final class MarkdownOperationReportRenderer {
 
     /** 7. 数据质量（仅完整版）。 */
     private static void appendQualitySection(StringBuilder out, OperationReportResult result) {
-        out.append("\n## 7. 数据质量\n\n");
         DataQualitySummary quality = result.dataQuality();
-        if (quality == null) {
-            out.append("无数据质量摘要。\n");
-        } else {
-            out.append("| 指标 | 值 |\n| --- | --- |\n");
-            out.append("| 原始记录数 | ").append(quality.rawRecordCount()).append(" 条 |\n");
-            out.append("| 有效记录数 | ").append(quality.validRecordCount()).append(" 条 |\n");
-            out.append("| 重复记录数 | ").append(quality.duplicateCount()).append(" 条 |\n");
-            out.append("| 无效时间记录数 | ").append(quality.invalidTimeCount()).append(" 条 |\n");
-            out.append("| 缺失采样点数 | ").append(quality.gapCount()).append(" 个 |\n");
-            out.append("| 数据完整率 | ").append(percent(quality.completeness())).append(" |\n");
-            out.append("| 数据是否充足 | ").append(quality.sufficient() ? "是" : "否").append(" |\n");
+        if (quality == null || quality.sufficient()) {
+            return;
         }
+        out.append("\n## 7. 数据质量限制\n\n");
+        out.append("本周期数据覆盖不足，趋势判断仅供参考。\n\n");
+        out.append("| 指标 | 值 |\n| --- | --- |\n");
+        out.append("| 原始记录数 | ").append(quality.rawRecordCount()).append(" 条 |\n");
+        out.append("| 有效记录数 | ").append(quality.validRecordCount()).append(" 条 |\n");
+        out.append("| 重复记录数 | ").append(quality.duplicateCount()).append(" 条 |\n");
+        out.append("| 无效时间记录数 | ").append(quality.invalidTimeCount()).append(" 条 |\n");
+        out.append("| 缺失采样点数 | ").append(quality.gapCount()).append(" 个 |\n");
+        out.append("| 数据完整率 | ").append(percent(quality.completeness())).append(" |\n");
     }
 
     /** 8. 状态与事件时间线（仅完整版）；状态值按当前数据契约翻译，不直接展示原始码。 */

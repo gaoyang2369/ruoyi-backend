@@ -59,10 +59,18 @@ public class HermesChatClient {
     }
 
     public HermesStream open(List<HermesMessage> messages) {
+        return open(messages, null);
+    }
+
+    /**
+     * 仅在需要调用受用户归属保护的内部工具时转发本轮 RuoYi 上下文。
+     * 该上下文位于 HTTP 头，不进入模型消息或工具参数。
+     */
+    public HermesStream open(List<HermesMessage> messages, HermesRequestContext requestContext) {
         if (StringUtils.isBlank(properties.getApiKey())) {
             throw new HermesChatException("Hermes 服务尚未配置");
         }
-        return new Stream(messages == null ? List.of() : List.copyOf(messages));
+        return new Stream(messages == null ? List.of() : List.copyOf(messages), requestContext);
     }
 
     /**
@@ -94,6 +102,12 @@ public class HermesChatClient {
     }
 
     public record HermesChatResult(String content) {
+    }
+
+    public record HermesRequestContext(Long agentId, Long sessionId, Long userId, String tenantId) {
+        boolean complete() {
+            return agentId != null && sessionId != null && userId != null && StringUtils.isNotBlank(tenantId);
+        }
     }
 
     /** A safe, frontend-facing tool progress signal. It deliberately carries no tool output. */
@@ -131,11 +145,13 @@ public class HermesChatClient {
 
     private final class Stream implements HermesStream {
         private final List<HermesMessage> messages;
+        private final HermesRequestContext requestContext;
         private final AtomicReference<Call> call = new AtomicReference<>();
         private final AtomicBoolean cancelled = new AtomicBoolean();
 
-        private Stream(List<HermesMessage> messages) {
+        private Stream(List<HermesMessage> messages, HermesRequestContext requestContext) {
             this.messages = messages;
+            this.requestContext = requestContext;
         }
 
         @Override
@@ -143,7 +159,7 @@ public class HermesChatClient {
             if (cancelled.get()) {
                 throw new HermesChatCancelledException();
             }
-            Call requestCall = httpClient.newCall(buildRequest(messages, true));
+            Call requestCall = httpClient.newCall(buildRequest(messages, true, requestContext));
             call.set(requestCall);
             if (cancelled.get()) {
                 requestCall.cancel();
@@ -336,6 +352,10 @@ public class HermesChatClient {
     }
 
     private Request buildRequest(List<HermesMessage> messages, boolean stream) {
+        return buildRequest(messages, stream, null);
+    }
+
+    private Request buildRequest(List<HermesMessage> messages, boolean stream, HermesRequestContext requestContext) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", properties.getModel());
         payload.put("stream", stream);
@@ -346,14 +366,20 @@ public class HermesChatClient {
         } catch (Exception e) {
             throw new HermesChatException("Hermes 请求构建失败", e);
         }
-        return new Request.Builder()
+        Request.Builder builder = new Request.Builder()
             .url(endpoint())
             .header("Authorization", "Bearer " + properties.getApiKey())
             .header("Content-Type", "application/json")
             .header("Accept", stream ? "text/event-stream" : "application/json")
             // Intentionally do not send X-Hermes-Session-Id: history belongs to RuoYi.
-            .post(RequestBody.create(json, JSON))
-            .build();
+            .post(RequestBody.create(json, JSON));
+        if (requestContext != null && requestContext.complete()) {
+            builder.header("X-RuoYi-Agent-Id", String.valueOf(requestContext.agentId()));
+            builder.header("X-RuoYi-Chat-Session-Id", String.valueOf(requestContext.sessionId()));
+            builder.header("X-RuoYi-User-Id", String.valueOf(requestContext.userId()));
+            builder.header("X-RuoYi-Tenant-Id", requestContext.tenantId());
+        }
+        return builder.build();
     }
 
     private String endpoint() {

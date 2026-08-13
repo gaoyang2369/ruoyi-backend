@@ -108,6 +108,20 @@ class OperationReportServiceTest {
     }
 
     @Test
+    void usesRequestedRecentWindowWhenTimesAreBothNull() {
+        when(agentService.queryById(7L)).thenReturn(enabledAgent());
+        when(operationReportOrchestrator.generate(any())).thenReturn(generatedReport());
+        OperationReportGenerateBo bo = bo("设备A", "逆变器A", null, null);
+        bo.setRecentMinutes(60);
+
+        service.generate(bo, 3L, "tenant");
+
+        ArgumentCaptor<DiagnosisCommand> captor = ArgumentCaptor.forClass(DiagnosisCommand.class);
+        verify(operationReportOrchestrator).generate(captor.capture());
+        assertEquals(Duration.ofMinutes(60), Duration.between(captor.getValue().startTime(), captor.getValue().endTime()));
+    }
+
+    @Test
     void rejectsPartialTimeWindow() {
         when(agentService.queryById(7L)).thenReturn(enabledAgent());
 

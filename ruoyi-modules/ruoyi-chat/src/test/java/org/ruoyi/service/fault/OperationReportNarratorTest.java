@@ -13,6 +13,7 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
 import org.ruoyi.fault.evidence.enums.EvidenceType;
 import org.ruoyi.fault.report.OperationReportAnalysisService;
+import org.ruoyi.fault.report.DiagnosisSummary;
 import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.report.ReportHealthStatus;
 import org.ruoyi.fault.telemetry.model.DataQualitySummary;
@@ -132,6 +133,35 @@ class OperationReportNarratorTest {
     }
 
     @Test
+    void acceptsFactsRoundedToThePrecisionWrittenByHermes() {
+        OperationReportResult report = report().withAnalysisFacts(new OperationReportResult.AnalysisFacts(List.of(
+            new OperationReportResult.MetricAnalysis("speedActual", "r/min", 789.136D, 789.136D, 0D,
+                789.136D, 789.136D, 789.136D, 0D, 0D)), List.of()));
+        for (String value : List.of("789", "789.1", "789.14", "789.136")) {
+            when(hermesChatClient.complete(anyList())).thenReturn(result(
+                "{\"executiveSummary\":\"实际转速约 " + value + " r/min。\"}"));
+            assertEquals("实际转速约 " + value + " r/min。", narrator().narrate(report).executiveSummary());
+        }
+
+        when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"实际转速约 780 r/min。\"}"));
+        assertNull(narrator().narrate(report));
+
+        when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"实际转速约 789.1 V。\"}"));
+        assertNull(narrator().narrate(report));
+    }
+
+    @Test
+    void finalizeAcceptsManualParametersFrozenInThePreparedSnapshot() {
+        OperationReportResult report = withTechnicalTokens(report(), List.of("p0100", "r0052"));
+        OperationReportResult.ReportNarrative narrative = new OperationReportResult.ReportNarrative(
+            "建议依据手册核对参数。", List.of(), List.of(),
+            List.of(new OperationReportResult.NarrativeRecommendation("P2", "核对单位制参数",
+                List.of("报告诊断"), List.of("记录 p0100 与 r0052 的当前值"))), null);
+
+        narrator().validateNarrative(report, narrative);
+    }
+
+    @Test
     void repairsUnknownFieldOnceThenAccepts() {
         when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"周期状态需关注\",\"extra\":true}"),
             result(arrayJson("周期状态需关注", false)));
@@ -163,12 +193,12 @@ class OperationReportNarratorTest {
     }
 
     @Test
-    void acceptsMinorDisplayPrecisionDifferenceForBackendDelta() {
+    void rejectsDigitsThatDoNotEqualTheFactAtTheirWrittenPrecision() {
         OperationReportResult report = preciseEventComparisonReport();
         String finding = "A07089 报警期间平均电流为 0.641 A，较事件前 0.58 A 升高 0.0614 A。";
         when(hermesChatClient.complete(anyList())).thenReturn(result("{\"operatingFindings\":[\"" + finding + "\"]}"));
 
-        assertEquals(List.of(finding), narrator().narrate(report).operatingFindings());
+        assertNull(narrator().narrate(report));
     }
 
     @Test
@@ -331,6 +361,16 @@ class OperationReportNarratorTest {
         return report().withAnalysisFacts(new OperationReportResult.AnalysisFacts(List.of(
             new OperationReportResult.MetricAnalysis("currentActual", "A", 0.58D, 0.59D, 0.01D,
                 0.6D, 0.5D, 0.7D, 0.2D, 0.04D)), List.of(event)));
+    }
+
+    private static OperationReportResult withTechnicalTokens(OperationReportResult report, List<String> tokens) {
+        DiagnosisSummary source = report.diagnosis();
+        DiagnosisSummary diagnosis = new DiagnosisSummary(source.status(), source.faultCodes(), source.alarmCodes(),
+            source.unknownCodes(), source.partial(), source.decisionRationale(), source.codeKnowledge(), tokens);
+        return new OperationReportResult(report.metadata(), report.asset(), report.period(), report.periodStatus(),
+            report.currentStatus(), report.summary(), report.dataQuality(), report.metricUnits(), report.dataCompleteness(),
+            report.metrics(), report.trends(), report.events(), report.statusTimeline(), report.analysisFacts(), diagnosis,
+            report.recommendations(), report.evidence(), report.narrative(), report.limitations(), report.diagnosisDetail());
     }
 
     private static OperationReportResult report() {

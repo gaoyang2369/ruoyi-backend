@@ -545,7 +545,8 @@ public record OperationReportResult(
             List<NarrativeRecommendation> items = new ArrayList<>();
             JsonNode recommendations = value.path("recommendations");
             if (recommendations.isArray()) for (JsonNode item : recommendations) {
-                items.add(new NarrativeRecommendation(text(item, "priority"), text(item, "action"), strings(item, "basis")));
+                items.add(new NarrativeRecommendation(text(item, "priority"), text(item, "action"), strings(item, "basis"),
+                    strings(item, "steps")));
             }
             return new ReportNarrative(text(value, "executiveSummary"), strings(value, "operatingFindings"),
                 strings(value, "anomalyAnalysis"), items, text(value, "riskNotice"));
@@ -567,12 +568,20 @@ public record OperationReportResult(
         }
     }
 
-    public record NarrativeRecommendation(String priority, String action, List<String> basis) {
+    /** Hermes 生成建议的结构化载体；basis 用于审计，steps 是可选的现场执行步骤。 */
+    public record NarrativeRecommendation(String priority, String action, List<String> basis, List<String> steps) {
         public NarrativeRecommendation {
             priority = priority == null ? null : priority.trim().toUpperCase(java.util.Locale.ROOT);
             action = action == null ? null : action.trim();
             basis = basis == null ? List.of() : basis.stream().filter(java.util.Objects::nonNull)
                 .map(String::trim).filter(value -> !value.isBlank()).toList();
+            steps = steps == null ? List.of() : steps.stream().filter(java.util.Objects::nonNull)
+                .map(String::trim).filter(value -> !value.isBlank()).toList();
+        }
+
+        /** 兼容既有 narrative 快照和调用方。 */
+        public NarrativeRecommendation(String priority, String action, List<String> basis) {
+            this(priority, action, basis, List.of());
         }
     }
 

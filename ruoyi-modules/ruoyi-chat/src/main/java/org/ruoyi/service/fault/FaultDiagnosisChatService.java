@@ -22,7 +22,6 @@ import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.knowledge.FaultKnowledgeEvidence;
 import org.ruoyi.fault.knowledge.FaultKnowledgeQuery;
 import org.ruoyi.fault.knowledge.FaultKnowledgeResult;
-import org.ruoyi.fault.report.OperationReportOrchestrator;
 import org.ruoyi.fault.report.OperationReportResult;
 import org.ruoyi.fault.telemetry.service.TelemetryQueryService;
 import org.ruoyi.service.chat.IChatMessageService;
@@ -62,8 +61,6 @@ public class FaultDiagnosisChatService {
     private final FaultCodeKnowledgeQueryService faultCodeKnowledgeQueryService;
     private final IChatMessageService chatMessageService;
     private final TelemetryQueryService telemetryQueryService;
-    private final OperationReportOrchestrator operationReportOrchestrator;
-    private final OperationReportSnapshotService operationReportSnapshotService;
     private final OperationReportService operationReportService;
 
     /** 使用门面已识别的报告计划生成一次快照；事实确定后再由 Agent 绑定模型做受约束归纳。 */
@@ -83,10 +80,11 @@ public class FaultDiagnosisChatService {
 
     private FaultReportChatResult createReport(ChatRequest request, DiagnosisCommand command,
                                                Long userId, String tenantId) {
-        OperationReportResult facts = operationReportOrchestrator.generate(command);
+        OperationReportResult facts = operationReportService.prepare(command, request.getSessionId(), userId, tenantId);
         OperationReportResult.ReportNarrative narrative = operationReportService.narrate(command.context().agentId(), facts);
-        OperationReportResult report = facts.withNarrative(narrative);
-        operationReportSnapshotService.save(report, request.getSessionId(), userId, tenantId);
+        OperationReportResult report = narrative == null
+            ? operationReportService.completeFallback(facts.metadata().reportId(), userId, tenantId)
+            : operationReportService.finalize(facts.metadata().reportId(), narrative, userId, tenantId);
         double completeness = report.dataQuality() == null ? 0D : report.dataQuality().completeness();
         FaultReportAttachment attachment = new FaultReportAttachment(
             report.metadata().reportId(),

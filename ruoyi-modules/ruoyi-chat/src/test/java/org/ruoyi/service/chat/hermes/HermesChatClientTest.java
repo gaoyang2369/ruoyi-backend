@@ -92,6 +92,25 @@ class HermesChatClientTest {
     }
 
     @Test
+    void forwardsPerRequestReportContextOnlyInHeaders() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(sse("data: [DONE]\n\n"));
+            server.start();
+
+            client(server).open(List.of(new HermesMessage("user", "生成报告")),
+                new HermesChatClient.HermesRequestContext(7L, 11L, 3L, "000000"))
+                .consume(listener(new ArrayList<>(), new ArrayList<>()));
+
+            RecordedRequest request = server.takeRequest();
+            assertEquals("7", request.getHeader("X-RuoYi-Agent-Id"));
+            assertEquals("11", request.getHeader("X-RuoYi-Chat-Session-Id"));
+            assertEquals("3", request.getHeader("X-RuoYi-User-Id"));
+            assertEquals("000000", request.getHeader("X-RuoYi-Tenant-Id"));
+            assertFalse(request.getBody().readUtf8().contains("X-RuoYi-User-Id"));
+        }
+    }
+
+    @Test
     void completesReportNarrationAsSingleNonStreamingJsonRequest() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
