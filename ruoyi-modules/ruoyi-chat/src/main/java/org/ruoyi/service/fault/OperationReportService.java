@@ -1,9 +1,7 @@
 package org.ruoyi.service.fault;
 
-import dev.langchain4j.model.chat.ChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
@@ -11,7 +9,6 @@ import org.ruoyi.domain.bo.fault.OperationReportGenerateBo;
 import org.ruoyi.domain.enums.agent.AgentExecutionMode;
 import org.ruoyi.domain.enums.agent.AgentScenarioCode;
 import org.ruoyi.domain.vo.agent.AgentVo;
-import org.ruoyi.factory.ChatServiceFactory;
 import org.ruoyi.fault.config.FaultDiagnosisProperties;
 import org.ruoyi.fault.domain.command.DiagnosisCommand;
 import org.ruoyi.fault.domain.context.DiagnosisRequestContext;
@@ -41,8 +38,6 @@ public class OperationReportService {
     private final TelemetryQueryService telemetryQueryService;
     private final OperationReportOrchestrator operationReportOrchestrator;
     private final OperationReportNarrator operationReportNarrator;
-    private final IChatModelService chatModelService;
-    private final ChatServiceFactory chatServiceFactory;
     private final FaultDiagnosisProperties faultDiagnosisProperties;
     private final OperationReportSnapshotService operationReportSnapshotService;
 
@@ -64,28 +59,9 @@ public class OperationReportService {
         return operationReportSnapshotService.get(reportCode, userId, tenantId);
     }
 
-    /** 为已生成的报告撰写 LLM 叙事；Agent 未绑定模型或模型不可用时返回 null（确定性降级）。 */
-    public String narrate(Long agentId, OperationReportResult report) {
-        AgentVo agent = agentId == null ? null : agentService.queryById(agentId);
-        return operationReportNarrator.narrate(report, resolveModel(agent), agent, null);
-    }
-
-    /** 与聊天门面相同的模型解析口径；任一步失败返回 null 而不是抛异常。 */
-    private ChatModel resolveModel(AgentVo agent) {
-        if (agent == null || agent.getModelId() == null) {
-            return null;
-        }
-        ChatModelVo model = chatModelService.queryById(agent.getModelId());
-        if (model == null) {
-            log.warn("运行报告Agent绑定的模型不存在: agentId={}, modelId={}", agent.getId(), agent.getModelId());
-            return null;
-        }
-        try {
-            return chatServiceFactory.getOriginalService(model.getProviderCode()).buildChatModel(model);
-        } catch (RuntimeException ex) {
-            log.warn("运行报告模型构建失败，回退确定性内容: agentId={}, error={}", agent.getId(), ex.toString());
-            return null;
-        }
+    /** 报告叙事固定经 Hermes；agentId 仅保留为现有聊天报告入口的兼容参数。 */
+    public OperationReportResult.ReportNarrative narrate(Long agentId, OperationReportResult report) {
+        return operationReportNarrator.narrate(report);
     }
 
     private AgentVo loadAndValidateAgent(Long agentId) {

@@ -105,6 +105,8 @@ class OperationReportOrchestratorTest {
         assertEquals(3, result.events().get(0).sampleHitCount());
         assertEquals(8, result.metrics().size());
         assertEquals(620D, metric(result, "dcVoltage").average());
+        assertEquals(625D, metric(result, "dcVoltage").current());
+        assertEquals(null, metric(result, "currentActual").current());
         assertEquals(12D, metric(result, "currentActual").average());
         assertEquals(1450D, metric(result, "speedActual").average());
         assertEquals(2, result.trends().get(0).points().size());

@@ -1,6 +1,7 @@
 package org.ruoyi.service.fault;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -34,6 +35,7 @@ import static org.mockito.Mockito.when;
 
 /** 验证 REST 运行报告入口的 Agent 校验、逆变器补全与时间窗处理。 */
 @ExtendWith(MockitoExtension.class)
+@Tag("dev")
 class OperationReportServiceTest {
 
     @Mock
@@ -45,10 +47,6 @@ class OperationReportServiceTest {
     @Mock
     private OperationReportNarrator operationReportNarrator;
     @Mock
-    private org.ruoyi.common.chat.service.chat.IChatModelService chatModelService;
-    @Mock
-    private org.ruoyi.factory.ChatServiceFactory chatServiceFactory;
-    @Mock
     private OperationReportSnapshotService operationReportSnapshotService;
 
     private OperationReportService service;
@@ -56,7 +54,7 @@ class OperationReportServiceTest {
     @BeforeEach
     void setUp() {
         service = new OperationReportService(agentService, telemetryQueryService,
-            operationReportOrchestrator, operationReportNarrator, chatModelService, chatServiceFactory,
+            operationReportOrchestrator, operationReportNarrator,
             new FaultDiagnosisProperties(), operationReportSnapshotService);
     }
 
@@ -128,12 +126,10 @@ class OperationReportServiceTest {
     }
 
     @Test
-    void narrateFallsBackWhenAgentHasNoModel() {
-        when(agentService.queryById(7L)).thenReturn(enabledAgent());
-
+    void narrateDelegatesToHermesNarratorWithoutResolvingAgentModel() {
         assertNull(service.narrate(7L, null));
 
-        verify(chatServiceFactory, never()).getOriginalService(any());
+        verify(operationReportNarrator).narrate(null);
     }
 
     @Test

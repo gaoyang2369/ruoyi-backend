@@ -84,7 +84,7 @@ public class FaultDiagnosisChatService {
     private FaultReportChatResult createReport(ChatRequest request, DiagnosisCommand command,
                                                Long userId, String tenantId) {
         OperationReportResult facts = operationReportOrchestrator.generate(command);
-        String narrative = operationReportService.narrate(command.context().agentId(), facts);
+        OperationReportResult.ReportNarrative narrative = operationReportService.narrate(command.context().agentId(), facts);
         OperationReportResult report = facts.withNarrative(narrative);
         operationReportSnapshotService.save(report, request.getSessionId(), userId, tenantId);
         double completeness = report.dataQuality() == null ? 0D : report.dataQuality().completeness();

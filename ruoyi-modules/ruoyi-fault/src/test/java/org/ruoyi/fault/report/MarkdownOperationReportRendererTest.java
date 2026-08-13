@@ -167,7 +167,8 @@ class MarkdownOperationReportRendererTest {
 
     @Test
     void rendererUsesNarrativeFrozenInReportSnapshot() {
-        OperationReportResult report = faultResult().withNarrative("模型归纳内容");
+        OperationReportResult report = faultResult().withNarrative(
+            new OperationReportResult.ReportNarrative("模型归纳内容", null, null, List.of(), null));
 
         String markdown = MarkdownOperationReportRenderer.renderFull(report, null, Map.of());
 

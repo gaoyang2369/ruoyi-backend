@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.ruoyi.config.HermesChatProperties;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
 import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("dev")
 class HermesChatClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -86,6 +88,21 @@ class HermesChatClientTest {
 
             assertEquals("Hermes 服务调用失败，请稍后重试", exception.getMessage());
             assertFalse(exception.getMessage().contains("test-secret"));
+        }
+    }
+
+    @Test
+    void completesReportNarrationAsSingleNonStreamingJsonRequest() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"{\\\"executiveSummary\\\":null}\"}}]}"));
+            server.start();
+
+            HermesChatResult result = client(server).complete(List.of(new HermesMessage("user", "report facts")));
+
+            assertEquals("{\"executiveSummary\":null}", result.content());
+            JsonNode body = objectMapper.readTree(server.takeRequest().getBody().readUtf8());
+            assertFalse(body.path("stream").asBoolean());
         }
     }
 

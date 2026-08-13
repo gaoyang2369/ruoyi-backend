@@ -1,6 +1,8 @@
 package org.ruoyi.fault.report;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.ruoyi.fault.domain.code.FaultCodeType;
 import org.ruoyi.fault.domain.result.DiagnosisResult;
 import org.ruoyi.fault.domain.result.EvidenceReference;
@@ -43,7 +45,7 @@ public record OperationReportResult(
     DiagnosisSummary diagnosis,
     List<Recommendation> recommendations,
     List<Evidence> evidence,
-    String narrative,
+    ReportNarrative narrative,
     List<String> limitations,
     @JsonIgnore DiagnosisResult diagnosisDetail
 ) {
@@ -59,7 +61,6 @@ public record OperationReportResult(
         statusTimeline = statusTimeline == null ? List.of() : List.copyOf(statusTimeline);
         recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
         evidence = evidence == null ? List.of() : List.copyOf(evidence);
-        narrative = narrative == null || narrative.isBlank() ? null : narrative.trim();
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
     }
 
@@ -91,7 +92,7 @@ public record OperationReportResult(
                                                      DiagnosisResult diagnosis) {
         TelemetryQueryResult source = telemetry == null ? emptyTelemetry() : telemetry;
         List<Event> events = eventsOf(source.operation(), source.faultCodes(), source.alarmCodes(), source.statusEvents());
-        List<Metric> metrics = metricsOf(statistics, source.operation());
+        List<Metric> metrics = metricsOf(statistics, source.operation(), series);
         return new OperationReportResult(
             new Metadata(reportId, generatedAt, REPORT_TYPE),
             new Asset(deviceName, inverterName),
@@ -116,7 +117,7 @@ public record OperationReportResult(
     }
 
     /** 将通过安全校验的模型叙事合并回同一份报告快照，不改变任何结构化事实。 */
-    public OperationReportResult withNarrative(String narrative) {
+    public OperationReportResult withNarrative(ReportNarrative narrative) {
         return new OperationReportResult(metadata, asset, period, periodStatus, currentStatus, summary,
             dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, diagnosis,
             recommendations, evidence, narrative, limitations, diagnosisDetail);
@@ -178,15 +179,28 @@ public record OperationReportResult(
             null, null, false, null, List.of(), null);
     }
 
-    private static List<Metric> metricsOf(TelemetryStatisticsResult statistics, OperationStatistics operation) {
+    private static List<Metric> metricsOf(TelemetryStatisticsResult statistics, OperationStatistics operation,
+                                          TelemetrySeriesResult series) {
         if (statistics == null || statistics.metrics() == null) {
             return List.of();
         }
         return statistics.metrics().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).map(entry -> {
             java.util.Map<String, Number> values = entry.getValue();
-            return new Metric(entry.getKey(), null, numberOf(values, "avg"), numberOf(values, "min"),
+            return new Metric(entry.getKey(), lastValidValue(entry.getKey(), series), numberOf(values, "avg"), numberOf(values, "min"),
                 numberOf(values, "max"), integerOf(values, "count"), peakAt(entry.getKey(), operation));
         }).toList();
+    }
+
+    /** 当前值取自同一份报告快照的窗口末端最后一个有效趋势桶，绝不重新查询遥测。 */
+    private static Double lastValidValue(String metricName, TelemetrySeriesResult series) {
+        if (series == null || series.series() == null || series.series().get(metricName) == null) {
+            return null;
+        }
+        return series.series().get(metricName).stream()
+            .filter(point -> point.timestamp() != null && point.value() != null)
+            .max(java.util.Comparator.comparing(point -> point.timestamp()))
+            .map(point -> point.value().doubleValue())
+            .orElse(null);
     }
 
     /** 仅附加既有运行摘要已计算出的峰值时刻，不在报告层重新扫描遥测数据。 */
@@ -364,6 +378,51 @@ public record OperationReportResult(
 
     /** 建议只转存既有诊断建议及其来源，不在报告层生成新建议。 */
     public record Recommendation(String content, String source) {
+    }
+
+    /** Hermes 在确定性事实边界内生成的可选可读叙事；为空时前端展示确定性内容。 */
+    public record ReportNarrative(String executiveSummary, String operatingFindings,
+                                  String anomalyAnalysis, List<NarrativeRecommendation> recommendations,
+                                  String riskNotice) {
+        public ReportNarrative {
+            executiveSummary = normalize(executiveSummary);
+            operatingFindings = normalize(operatingFindings);
+            anomalyAnalysis = normalize(anomalyAnalysis);
+            recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
+            riskNotice = normalize(riskNotice);
+        }
+
+        private static String normalize(String value) {
+            return value == null || value.isBlank() ? null : value.trim();
+        }
+
+        /** 兼容既有快照中的纯文本 narrative，将其作为执行摘要继续可读。 */
+        @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+        public static ReportNarrative fromJson(JsonNode value) {
+            if (value == null || value.isNull()) return null;
+            if (value.isTextual()) return new ReportNarrative(value.asText(), null, null, List.of(), null);
+            if (!value.isObject()) return null;
+            List<NarrativeRecommendation> items = new ArrayList<>();
+            JsonNode recommendations = value.path("recommendations");
+            if (recommendations.isArray()) for (JsonNode item : recommendations) {
+                items.add(new NarrativeRecommendation(text(item, "priority"), text(item, "action"), text(item, "basis")));
+            }
+            return new ReportNarrative(text(value, "executiveSummary"), text(value, "operatingFindings"),
+                text(value, "anomalyAnalysis"), items, text(value, "riskNotice"));
+        }
+
+        private static String text(JsonNode value, String name) {
+            JsonNode child = value.path(name);
+            return child.isTextual() ? child.asText() : null;
+        }
+    }
+
+    public record NarrativeRecommendation(String priority, String action, String basis) {
+        public NarrativeRecommendation {
+            priority = priority == null ? null : priority.trim().toUpperCase(java.util.Locale.ROOT);
+            action = action == null ? null : action.trim();
+            basis = basis == null ? null : basis.trim();
+        }
     }
 
     /** 持久化证据的结构化展示信息。 */

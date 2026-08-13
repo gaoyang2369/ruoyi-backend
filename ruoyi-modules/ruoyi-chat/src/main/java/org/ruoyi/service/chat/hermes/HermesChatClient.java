@@ -65,6 +65,31 @@ public class HermesChatClient {
         return new Stream(messages == null ? List.of() : List.copyOf(messages));
     }
 
+    /**
+     * 报告叙事专用的单次非流式调用。调用方只传确定性报告事实；本方法不附加工具或会话上下文。
+     */
+    public HermesChatResult complete(List<HermesMessage> messages) {
+        if (StringUtils.isBlank(properties.getApiKey())) {
+            throw new HermesChatException("Hermes 服务尚未配置");
+        }
+        Request request = buildRequest(messages == null ? List.of() : List.copyOf(messages), false);
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful() || response.body() == null) {
+                throw new HermesChatException("Hermes 服务调用失败，请稍后重试");
+            }
+            JsonNode root = objectMapper.readTree(response.body().string());
+            String content = root.path("choices").path(0).path("message").path("content").asText(null);
+            if (StringUtils.isBlank(content)) {
+                throw new HermesChatException("Hermes 非流式响应格式错误");
+            }
+            return new HermesChatResult(content);
+        } catch (HermesChatException e) {
+            throw e;
+        } catch (IOException | RuntimeException e) {
+            throw new HermesChatException("Hermes 服务调用失败，请稍后重试", e);
+        }
+    }
+
     public record HermesMessage(String role, String content) {
     }
 
@@ -118,7 +143,7 @@ public class HermesChatClient {
             if (cancelled.get()) {
                 throw new HermesChatCancelledException();
             }
-            Call requestCall = httpClient.newCall(buildRequest(messages));
+            Call requestCall = httpClient.newCall(buildRequest(messages, true));
             call.set(requestCall);
             if (cancelled.get()) {
                 requestCall.cancel();
@@ -310,10 +335,10 @@ public class HermesChatClient {
         }
     }
 
-    private Request buildRequest(List<HermesMessage> messages) {
+    private Request buildRequest(List<HermesMessage> messages, boolean stream) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", properties.getModel());
-        payload.put("stream", true);
+        payload.put("stream", stream);
         payload.put("messages", messages);
         final String json;
         try {
@@ -325,7 +350,7 @@ public class HermesChatClient {
             .url(endpoint())
             .header("Authorization", "Bearer " + properties.getApiKey())
             .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
+            .header("Accept", stream ? "text/event-stream" : "application/json")
             // Intentionally do not send X-Hermes-Session-Id: history belongs to RuoYi.
             .post(RequestBody.create(json, JSON))
             .build();

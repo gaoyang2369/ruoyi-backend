@@ -191,7 +191,7 @@ public final class MarkdownOperationReportRenderer {
     private static void appendRecommendations(StringBuilder out, String title, OperationReportResult result,
                                               String narrative) {
         out.append("\n## ").append(title).append("\n\n");
-        String effectiveNarrative = narrative == null ? result.narrative() : narrative;
+        String effectiveNarrative = narrative == null ? narrativeText(result.narrative()) : narrative;
         if (effectiveNarrative != null && !effectiveNarrative.isBlank()) {
             out.append(effectiveNarrative.trim()).append('\n');
             return;
@@ -216,6 +216,28 @@ public final class MarkdownOperationReportRenderer {
             index++;
             out.append(index).append(". ").append(recommendation.content()).append('\n');
         }
+    }
+
+    /** 将结构化 Hermes 叙事投影为 Markdown；快照为空时仍走确定性建议。 */
+    private static String narrativeText(OperationReportResult.ReportNarrative narrative) {
+        if (narrative == null) return null;
+        StringBuilder out = new StringBuilder();
+        appendNarrativePart(out, narrative.executiveSummary());
+        appendNarrativePart(out, narrative.operatingFindings());
+        appendNarrativePart(out, narrative.anomalyAnalysis());
+        for (OperationReportResult.NarrativeRecommendation recommendation : narrative.recommendations()) {
+            if (recommendation != null && recommendation.action() != null) {
+                out.append("- ").append(recommendation.priority()).append("：").append(recommendation.action());
+                if (recommendation.basis() != null) out.append("（依据：").append(recommendation.basis()).append('）');
+                out.append('\n');
+            }
+        }
+        appendNarrativePart(out, narrative.riskNotice());
+        return out.isEmpty() ? null : out.toString().trim();
+    }
+
+    private static void appendNarrativePart(StringBuilder out, String value) {
+        if (value != null && !value.isBlank()) out.append(value.trim()).append('\n');
     }
 
     /** 精简版运行摘要：只渲染已配置单位的指标；没有可展示指标时整节省略。 */

@@ -1,13 +1,10 @@
 package org.ruoyi.service.fault;
 
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.response.ChatResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.ruoyi.fault.domain.enums.DiagnosisStatus;
@@ -18,70 +15,75 @@ import org.ruoyi.fault.telemetry.model.DataQualitySummary;
 import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
-import org.ruoyi.service.fault.model.FaultExecutionResult;
+import org.ruoyi.service.chat.hermes.HermesChatClient;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatException;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesChatResult;
+import org.ruoyi.service.chat.hermes.HermesChatClient.HermesMessage;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 验证运行报告叙事层：成功返回受校验正文，任何失败路径确定性降级为 null。 */
-@Tag("dev")
+/** 覆盖 Hermes 成功、不可用、非法代码/证据和 JSON 解析降级。 */
 @ExtendWith(MockitoExtension.class)
+@Tag("dev")
 class OperationReportNarratorTest {
-
-    @Mock
-    private FaultAnswerSafetyValidator faultAnswerSafetyValidator;
-    @InjectMocks
-    private OperationReportNarrator narrator;
+    @Mock private HermesChatClient hermesChatClient;
 
     @Test
-    void returnsValidatedNarrative() {
-        ChatModel model = model("A07089 为报警码，资料解释为直流回路电压异常[EV-001]。建议检查供电电压。");
-        when(faultAnswerSafetyValidator.valid(anyString(), any(FaultExecutionResult.class), anyBoolean()))
-            .thenReturn(true);
+    void acceptsOneHermesJsonNarrative() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result(json("周期状态需关注", "无额外运行解读", "建议按报告事件排查", "P2", "核查相关回路", "报告事件", "请结合数据质量使用")));
+        OperationReportNarrator narrator = narrator();
 
-        String narrative = narrator.narrate(report(), model, null, "生成运行报告");
+        OperationReportResult.ReportNarrative narrative = narrator.narrate(report());
 
-        assertEquals("A07089 为报警码，资料解释为直流回路电压异常[EV-001]。建议检查供电电压。", narrative);
-    }
-
-    @Test
-    void nullModelFallsBackToNull() {
-        assertNull(narrator.narrate(report(), null, null, null));
+        assertEquals("周期状态需关注", narrative.executiveSummary());
+        assertEquals("P2", narrative.recommendations().get(0).priority());
+        ArgumentCaptor<List<HermesMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(hermesChatClient).complete(messages.capture());
+        assertEquals(2, messages.getValue().size());
+        assertTrue(messages.getValue().get(0).content().contains("REPORT_NARRATION"));
     }
 
     @Test
-    void modelExceptionFallsBackToNull() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.chat(anyList())).thenThrow(new RuntimeException("boom"));
-
-        assertNull(narrator.narrate(report(), model, null, null));
+    void hermesUnavailableFallsBackToDeterministicReport() {
+        when(hermesChatClient.complete(anyList())).thenThrow(new HermesChatException("unavailable"));
+        assertNull(narrator().narrate(report()));
     }
 
     @Test
-    void safetyRejectionFallsBackToNull() {
-        ChatModel model = model("检测到未观测的 F99999 故障。");
-        when(faultAnswerSafetyValidator.valid(anyString(), any(FaultExecutionResult.class), anyBoolean()))
-            .thenReturn(false);
-
-        assertNull(narrator.narrate(report(), model, null, null));
+    void rejectsUnknownCodeOrEvidence() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result(json("F99999", null, null, "P1", "检查", "EV-999", null)));
+        assertNull(narrator().narrate(report()));
     }
 
-    private static ChatModel model(String text) {
-        ChatResponse response = mock(ChatResponse.class);
-        when(response.aiMessage()).thenReturn(AiMessage.from(text));
-        ChatModel model = mock(ChatModel.class);
-        when(model.chat(any(List.class))).thenReturn(response);
-        return model;
+    @Test
+    void rejectsMalformedJson() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result("not-json"));
+        assertNull(narrator().narrate(report()));
     }
+
+    private OperationReportNarrator narrator() {
+        return new OperationReportNarrator(hermesChatClient, new ObjectMapper());
+    }
+
+    private static HermesChatResult result(String body) { return new HermesChatResult(body); }
+
+    private static String json(String summary, String findings, String analysis, String priority, String action,
+                               String basis, String risk) {
+        return "{\"executiveSummary\":" + quoted(summary) + ",\"operatingFindings\":" + quoted(findings)
+            + ",\"anomalyAnalysis\":" + quoted(analysis) + ",\"recommendations\":[{\"priority\":\""
+            + priority + "\",\"action\":\"" + action + "\",\"basis\":\"" + basis
+            + "\"}],\"riskNotice\":" + quoted(risk) + "}";
+    }
+
+    private static String quoted(String value) { return value == null ? "null" : "\"" + value + "\""; }
 
     private static OperationReportResult report() {
         LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);
@@ -100,5 +102,4 @@ class OperationReportNarratorTest {
             new OperationReportResult.Summary("报告周期内设备状态：关注。", List.of(), List.of("A07089"), true),
             telemetry, null, null, diagnosis);
     }
-
 }

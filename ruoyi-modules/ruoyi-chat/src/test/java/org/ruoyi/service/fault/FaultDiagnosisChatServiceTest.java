@@ -370,7 +370,9 @@ class FaultDiagnosisChatServiceTest {
         when(faultRequestPlanner.plan(any(), any(), any(), any(), anyInt(), any(), any(), any())).thenReturn(plan);
         when(telemetryQueryService.resolveInverterName("设备A")).thenReturn("逆变器A");
         when(operationReportOrchestrator.generate(any())).thenReturn(reportResult());
-        when(operationReportService.narrate(eq(7L), any())).thenReturn("受结构化事实约束的模型归纳");
+        org.ruoyi.fault.report.OperationReportResult.ReportNarrative narrative =
+            new org.ruoyi.fault.report.OperationReportResult.ReportNarrative("受结构化事实约束的模型归纳", null, null, List.of(), null);
+        when(operationReportService.narrate(eq(7L), any())).thenReturn(narrative);
         ChatRequest request = new ChatRequest();
         request.setContent("生成设备A今天的运行报告");
         request.setSessionId(9L);
@@ -382,7 +384,7 @@ class FaultDiagnosisChatServiceTest {
         ArgumentCaptor<org.ruoyi.fault.report.OperationReportResult> reportCaptor =
             ArgumentCaptor.forClass(org.ruoyi.fault.report.OperationReportResult.class);
         verify(operationReportSnapshotService).save(reportCaptor.capture(), eq(9L), eq(3L), eq("tenant-a"));
-        assertEquals("受结构化事实约束的模型归纳", reportCaptor.getValue().narrative());
+        assertEquals("受结构化事实约束的模型归纳", reportCaptor.getValue().narrative().executiveSummary());
         verify(faultDiagnosisOrchestrator, never()).diagnose(any());
         verifyNoInteractions(faultAnswerGenerator, faultAnswerSafetyValidator);
     }
