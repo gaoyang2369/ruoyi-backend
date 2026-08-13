@@ -73,6 +73,22 @@ class OperationReportAnalysisServiceTest {
     }
 
     @Test
+    void comparesRepeatedCodeEpisodesWithoutIncludingRecoveredGapInDuring() {
+        LocalDateTime firstStart = start.plusMinutes(60);
+        LocalDateTime firstRecovered = firstStart.plusMinutes(2);
+        LocalDateTime secondStart = start.plusMinutes(120);
+        LocalDateTime secondRecovered = secondStart.plusMinutes(2);
+        OperationReportResult.AnalysisFacts facts = analyze(List.of(
+            event("A07089", firstStart, firstRecovered), event("A07089", secondStart, secondRecovered)), List.of(
+            sample(30, 30D), sample(60, 40D), sample(61, 42D), sample(90, 10D),
+            sample(120, 50D), sample(121, 52D), sample(150, 35D)));
+
+        assertEquals(2, facts.eventComparisons().size());
+        assertEquals(41D, facts.eventComparisons().get(0).metrics().get("motorTemp").during().avg());
+        assertEquals(51D, facts.eventComparisons().get(1).metrics().get("motorTemp").during().avg());
+    }
+
+    @Test
     void marksIntervalsWithoutSamplesUnavailable() {
         OperationReportResult.AnalysisFacts facts = analyze(List.of(event("A07089", start.plusHours(1), start.plusHours(2))),
             List.of(sample(30, 30D)));

@@ -486,6 +486,7 @@ public class TelemetryDataAnalyzer {
     private List<StatusEvent> buildStatusEvents(List<TimedRecord> records) {
         List<StatusEvent> events = new ArrayList<>();
         String previousSignature = null;
+        LocalDateTime previousObservedAt = null;
         for (TimedRecord record : records) {
             String status = normalize(record.data().getStatus());
             String[] classified = classifyRecordCodes(record.data());
@@ -496,9 +497,10 @@ public class TelemetryDataAnalyzer {
             }
             String signature = String.join("|", nullToEmpty(status), nullToEmpty(faultCode), nullToEmpty(alarmCode));
             if (!signature.equals(previousSignature)) {
-                events.add(new StatusEvent(record.observedAt(), status, faultCode, alarmCode));
+                events.add(new StatusEvent(record.observedAt(), status, faultCode, alarmCode, previousObservedAt));
                 previousSignature = signature;
             }
+            previousObservedAt = record.observedAt();
         }
         return List.copyOf(events);
     }

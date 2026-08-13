@@ -17,9 +17,11 @@ import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Report V2 的结构化运行报告。
@@ -275,65 +277,114 @@ public record OperationReportResult(
 
     private static List<Event> eventsOf(OperationStatistics operation, List<String> faultCodes,
                                         List<String> alarmCodes, List<StatusEvent> timeline) {
-        List<Event> events = new ArrayList<>();
-        if (operation != null) {
-            appendEvents(events, operation.faultCodeOccurrences(), FaultCodeType.FAULT, timeline);
-            appendEvents(events, operation.alarmCodeOccurrences(), FaultCodeType.ALARM, timeline);
-        }
+        Map<String, CodeOccurrence> faultOccurrences = occurrencesByCode(operation == null ? null : operation.faultCodeOccurrences());
+        Map<String, CodeOccurrence> alarmOccurrences = occurrencesByCode(operation == null ? null : operation.alarmCodeOccurrences());
+        List<Event> events = new ArrayList<>(episodesOf(timeline, FaultCodeType.FAULT, faultOccurrences));
+        events.addAll(episodesOf(timeline, FaultCodeType.ALARM, alarmOccurrences));
+        appendUnrepresentedOccurrences(events, faultOccurrences, FaultCodeType.FAULT);
+        appendUnrepresentedOccurrences(events, alarmOccurrences, FaultCodeType.ALARM);
         appendMissingCodes(events, faultCodes, FaultCodeType.FAULT);
         appendMissingCodes(events, alarmCodes, FaultCodeType.ALARM);
-        return List.copyOf(events);
+        return events.stream().sorted(Comparator.comparing(Event::firstSeenAt,
+            Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(Event::code)).toList();
     }
 
-    private static void appendEvents(List<Event> target, List<CodeOccurrence> occurrences, FaultCodeType type,
-                                     List<StatusEvent> timeline) {
-        if (occurrences == null) {
-            return;
+    /**
+     * Report V2 事件按 status timeline 中真实的代码出现/消失边界切分为 episode，不能把同一码的多次出现合并。
+     * CodeOccurrence 保留窗口级统计；只有一个 episode 时才可无歧义地复用其命中数和末次出现时间。
+     */
+    private static List<Event> episodesOf(List<StatusEvent> timeline, FaultCodeType type,
+                                          Map<String, CodeOccurrence> occurrences) {
+        if (timeline == null || timeline.isEmpty()) {
+            return List.of();
         }
-        for (CodeOccurrence occurrence : occurrences) {
-            boolean active = occurrence.active() || activeAtWindowEnd(occurrence.code(), type, timeline);
-            LocalDateTime recoveredAt = occurrence.recoveredAt() == null && !active
-                ? recoveredAt(occurrence.code(), type, occurrence.lastObservedAt(), timeline) : occurrence.recoveredAt();
-            target.add(new Event(occurrence.code(), type, active, occurrence.firstObservedAt(),
-                occurrence.lastObservedAt(), recoveredAt, occurrence.sampleCount()));
+        List<Event> episodes = new ArrayList<>();
+        String activeCode = null;
+        LocalDateTime firstSeenAt = null;
+        LocalDateTime lastSeenAt = null;
+        for (StatusEvent event : timeline.stream().filter(Objects::nonNull)
+            .filter(event -> event.observedAt() != null).sorted(Comparator.comparing(StatusEvent::observedAt)).toList()) {
+            String code = type == FaultCodeType.FAULT ? event.faultCode() : event.alarmCode();
+            if (Objects.equals(activeCode, code)) {
+                if (code != null) {
+                    lastSeenAt = event.observedAt();
+                }
+                continue;
+            }
+            if (activeCode != null) {
+                LocalDateTime episodeLastSeenAt = event.previousObservedAt() == null ? lastSeenAt : event.previousObservedAt();
+                episodes.add(new Event(activeCode, type, false, firstSeenAt, episodeLastSeenAt,
+                    event.observedAt(), 0));
+            }
+            activeCode = code;
+            firstSeenAt = code == null ? null : event.observedAt();
+            lastSeenAt = firstSeenAt;
+        }
+        if (activeCode != null) {
+            episodes.add(new Event(activeCode, type, true, firstSeenAt, lastSeenAt, null, 0));
+        }
+        return enrichSingleOrFinalEpisode(episodes, occurrences);
+    }
+
+    private static List<Event> enrichSingleOrFinalEpisode(List<Event> episodes,
+                                                            Map<String, CodeOccurrence> occurrences) {
+        if (episodes.isEmpty() || occurrences.isEmpty()) {
+            return List.copyOf(episodes);
+        }
+        Map<String, List<Event>> byCode = episodes.stream().collect(java.util.stream.Collectors.groupingBy(
+            Event::code, LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        List<Event> result = new ArrayList<>();
+        for (Event episode : episodes) {
+            CodeOccurrence occurrence = occurrences.get(episode.code());
+            List<Event> codeEpisodes = byCode.get(episode.code());
+            boolean onlyEpisode = codeEpisodes.size() == 1;
+            boolean finalEpisode = codeEpisodes.get(codeEpisodes.size() - 1) == episode;
+            if (occurrence == null) {
+                result.add(episode);
+                continue;
+            }
+            LocalDateTime lastSeenAt = onlyEpisode || finalEpisode
+                ? nonNullOr(occurrence.lastObservedAt(), episode.lastSeenAt()) : episode.lastSeenAt();
+            int sampleHitCount = onlyEpisode ? occurrence.sampleCount() : 0;
+            result.add(new Event(episode.code(), episode.type(), episode.active(), episode.firstSeenAt(), lastSeenAt,
+                episode.recoveredAt(), sampleHitCount));
+        }
+        return List.copyOf(result);
+    }
+
+    private static Map<String, CodeOccurrence> occurrencesByCode(List<CodeOccurrence> occurrences) {
+        if (occurrences == null || occurrences.isEmpty()) {
+            return Map.of();
+        }
+        return occurrences.stream().filter(Objects::nonNull).filter(occurrence -> occurrence.code() != null)
+            .collect(java.util.stream.Collectors.toMap(CodeOccurrence::code, occurrence -> occurrence,
+                (left, right) -> right, LinkedHashMap::new));
+    }
+
+    private static void appendUnrepresentedOccurrences(List<Event> target, Map<String, CodeOccurrence> occurrences,
+                                                        FaultCodeType type) {
+        for (CodeOccurrence occurrence : occurrences.values()) {
+            boolean present = target.stream().anyMatch(event -> event.type() == type && occurrence.code().equals(event.code()));
+            if (!present) {
+                target.add(new Event(occurrence.code(), type, occurrence.active(), occurrence.firstObservedAt(),
+                    occurrence.lastObservedAt(), occurrence.recoveredAt(), occurrence.sampleCount()));
+            }
         }
     }
 
     private static void appendMissingCodes(List<Event> target, List<String> codes, FaultCodeType type) {
-        if (codes == null) {
-            return;
-        }
-        for (String code : codes) {
-            boolean present = target.stream().anyMatch(event -> event.type() == type && code.equals(event.code()));
-            if (!present) {
-                target.add(new Event(code, type, false, null, null, null, 0));
+        if (codes != null) {
+            for (String code : codes) {
+                boolean present = target.stream().anyMatch(event -> event.type() == type && code.equals(event.code()));
+                if (!present) {
+                    target.add(new Event(code, type, false, null, null, null, 0));
+                }
             }
         }
     }
 
-    private static boolean activeAtWindowEnd(String code, FaultCodeType type, List<StatusEvent> timeline) {
-        if (timeline == null || timeline.isEmpty()) {
-            return false;
-        }
-        StatusEvent last = timeline.get(timeline.size() - 1);
-        return code.equals(type == FaultCodeType.FAULT ? last.faultCode() : last.alarmCode());
-    }
-
-    private static LocalDateTime recoveredAt(String code, FaultCodeType type, LocalDateTime lastSeenAt,
-                                             List<StatusEvent> timeline) {
-        if (timeline == null) {
-            return null;
-        }
-        for (StatusEvent event : timeline) {
-            if (lastSeenAt != null && event.observedAt() != null && event.observedAt().isBefore(lastSeenAt)) {
-                continue;
-            }
-            String eventCode = type == FaultCodeType.FAULT ? event.faultCode() : event.alarmCode();
-            if (!code.equals(eventCode) && event.observedAt() != null) {
-                return event.observedAt();
-            }
-        }
-        return null;
+    private static LocalDateTime nonNullOr(LocalDateTime preferred, LocalDateTime fallback) {
+        return preferred == null ? fallback : preferred;
     }
 
     private static List<StatusTimelineEvent> timelineOf(List<StatusEvent> events) {
@@ -405,7 +456,7 @@ public record OperationReportResult(
                                        double completeness) {
     }
 
-    /** 一个故障码或报警码在窗口内的聚合事件；sampleHitCount 是包含该代码的遥测样本数。 */
+    /** 一个故障码或报警码的连续 episode；同一码多次出现会分别输出。 */
     public record Event(String code, FaultCodeType type, boolean active, LocalDateTime firstSeenAt,
                         LocalDateTime lastSeenAt, LocalDateTime recoveredAt, int sampleHitCount) {
     }

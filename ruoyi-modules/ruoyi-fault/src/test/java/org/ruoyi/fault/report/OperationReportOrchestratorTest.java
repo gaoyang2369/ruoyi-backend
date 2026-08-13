@@ -159,6 +159,41 @@ class OperationReportOrchestratorTest {
     }
 
     @Test
+    void splitsRepeatedCodeIntoSeparateReportEventEpisodes() {
+        LocalDateTime start = LocalDateTime.of(2026, 1, 1, 21, 11);
+        LocalDateTime firstStart = start.plusMinutes(19);
+        LocalDateTime firstRecovered = firstStart.plusMinutes(2);
+        LocalDateTime secondStart = start.plusMinutes(49);
+        LocalDateTime secondRecovered = secondStart.plusMinutes(2);
+        TelemetryQueryResult telemetry = new TelemetryQueryResult("device", start, start.plusHours(1),
+            new DataQualitySummary(10, 10, 0, 0, 0, 1D, true), List.of(), List.of("A07089"), List.of(),
+            List.of(new StatusEvent(start, "0", null, null),
+                new StatusEvent(firstStart, "42", null, "A07089", firstStart.minusSeconds(4)),
+                new StatusEvent(firstRecovered, "0", null, null, firstRecovered.minusSeconds(4)),
+                new StatusEvent(secondStart, "42", null, "A07089", secondStart.minusSeconds(4)),
+                new StatusEvent(secondRecovered, "0", null, null, secondRecovered.minusSeconds(4))),
+            statistics(), "digest", false, start.plusMinutes(59), List.of(), new OperationStatistics(null, null,
+                List.of(), List.of(new CodeOccurrence("A07089", 4, firstStart, secondRecovered.minusSeconds(4),
+                    false, secondRecovered))));
+        when(telemetryQueryService.queryReportTelemetry(any(), any(), any(), any())).thenReturn(reportSnapshot(telemetry));
+        when(faultDiagnosisOrchestrator.diagnose(any(DiagnosisCommand.class), any(TelemetryQueryResult.class)))
+            .thenReturn(diagnosis(DiagnosisStatus.WARNING_DETECTED, List.of(), List.of("A07089")));
+
+        OperationReportResult result = orchestrator.generate(command());
+
+        assertEquals(2, result.events().size());
+        assertEquals(firstStart, result.events().get(0).firstSeenAt());
+        assertEquals(firstRecovered, result.events().get(0).recoveredAt());
+        assertEquals(firstRecovered.minusSeconds(4), result.events().get(0).lastSeenAt());
+        assertEquals(secondStart, result.events().get(1).firstSeenAt());
+        assertEquals(secondRecovered, result.events().get(1).recoveredAt());
+        assertEquals(secondRecovered.minusSeconds(4), result.events().get(1).lastSeenAt());
+        assertEquals(2, result.analysisFacts().eventComparisons().size());
+        assertEquals(List.of(firstStart, secondStart), result.analysisFacts().eventComparisons().stream()
+            .map(OperationReportResult.EventComparison::startTime).toList());
+    }
+
+    @Test
     void dataInsufficientReportDoesNotExposeMetricsOrTrends() {
         LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
         TelemetryQueryResult telemetry = new TelemetryQueryResult("device", start, start.plusMinutes(30),
