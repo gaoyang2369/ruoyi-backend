@@ -381,13 +381,13 @@ public record OperationReportResult(
     }
 
     /** Hermes 在确定性事实边界内生成的可选可读叙事；为空时前端展示确定性内容。 */
-    public record ReportNarrative(String executiveSummary, String operatingFindings,
-                                  String anomalyAnalysis, List<NarrativeRecommendation> recommendations,
+    public record ReportNarrative(String executiveSummary, List<String> operatingFindings,
+                                  List<String> anomalyAnalysis, List<NarrativeRecommendation> recommendations,
                                   String riskNotice) {
         public ReportNarrative {
             executiveSummary = normalize(executiveSummary);
-            operatingFindings = normalize(operatingFindings);
-            anomalyAnalysis = normalize(anomalyAnalysis);
+            operatingFindings = normalizeList(operatingFindings);
+            anomalyAnalysis = normalizeList(anomalyAnalysis);
             recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
             riskNotice = normalize(riskNotice);
         }
@@ -396,32 +396,48 @@ public record OperationReportResult(
             return value == null || value.isBlank() ? null : value.trim();
         }
 
+        private static List<String> normalizeList(List<String> values) {
+            if (values == null) return List.of();
+            return values.stream().map(ReportNarrative::normalize).filter(java.util.Objects::nonNull).toList();
+        }
+
         /** 兼容既有快照中的纯文本 narrative，将其作为执行摘要继续可读。 */
         @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
         public static ReportNarrative fromJson(JsonNode value) {
             if (value == null || value.isNull()) return null;
-            if (value.isTextual()) return new ReportNarrative(value.asText(), null, null, List.of(), null);
+            if (value.isTextual()) return new ReportNarrative(value.asText(), List.of(), List.of(), List.of(), null);
             if (!value.isObject()) return null;
             List<NarrativeRecommendation> items = new ArrayList<>();
             JsonNode recommendations = value.path("recommendations");
             if (recommendations.isArray()) for (JsonNode item : recommendations) {
-                items.add(new NarrativeRecommendation(text(item, "priority"), text(item, "action"), text(item, "basis")));
+                items.add(new NarrativeRecommendation(text(item, "priority"), text(item, "action"), strings(item, "basis")));
             }
-            return new ReportNarrative(text(value, "executiveSummary"), text(value, "operatingFindings"),
-                text(value, "anomalyAnalysis"), items, text(value, "riskNotice"));
+            return new ReportNarrative(text(value, "executiveSummary"), strings(value, "operatingFindings"),
+                strings(value, "anomalyAnalysis"), items, text(value, "riskNotice"));
         }
 
         private static String text(JsonNode value, String name) {
             JsonNode child = value.path(name);
             return child.isTextual() ? child.asText() : null;
         }
+
+        /** 旧快照允许单个字符串；新结构使用字符串数组。 */
+        private static List<String> strings(JsonNode value, String name) {
+            JsonNode child = value.path(name);
+            if (child.isTextual()) return List.of(child.asText());
+            if (!child.isArray()) return List.of();
+            List<String> values = new ArrayList<>();
+            for (JsonNode item : child) if (item.isTextual()) values.add(item.asText());
+            return values;
+        }
     }
 
-    public record NarrativeRecommendation(String priority, String action, String basis) {
+    public record NarrativeRecommendation(String priority, String action, List<String> basis) {
         public NarrativeRecommendation {
             priority = priority == null ? null : priority.trim().toUpperCase(java.util.Locale.ROOT);
             action = action == null ? null : action.trim();
-            basis = basis == null ? null : basis.trim();
+            basis = basis == null ? List.of() : basis.stream().filter(java.util.Objects::nonNull)
+                .map(String::trim).filter(value -> !value.isBlank()).toList();
         }
     }
 

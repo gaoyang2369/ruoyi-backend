@@ -58,14 +58,16 @@ fault:
       "[G120电机4]": real_data_04
     # 请求窗口无数据时回退到该设备最近可用数据窗口（模拟数据阶段保证始终有数据可查）
     latest-data-fallback-enabled: true
-    # 运行指标单位：报告只展示已配置单位的指标。模拟数据阶段单位未确认，保持为空即全部隐藏；
-    # 真实数据字典确认后按需启用，例如：
-    # metric-units:
-    #   actual-power: kW
-    #   motor-temp: ℃
-    #   inverter-temp: ℃
-    #   motor-load-rate: "%"
-    #   inverter-load-rate: "%"
+    # 模拟器数据契约的显示单位；真实 DCMA 接入后必须按真实数据字典复核，不能将此配置视为现场定义。
+    metric-units:
+      dc-voltage: V
+      current-actual: A
+      speed-actual: r/min
+      actual-power: kW
+      motor-temp: ℃
+      inverter-temp: ℃
+      motor-load-rate: "%"
+      inverter-load-rate: "%"
   internal-tools:
     # Hermes 内部调用 Token，空值时接口不可用。
     token: ${FAULT_INTERNAL_TOOLS_TOKEN:}

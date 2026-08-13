@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 /** 覆盖 Hermes 成功、不可用、非法代码/证据和 JSON 解析降级。 */
 @ExtendWith(MockitoExtension.class)
@@ -64,9 +65,60 @@ class OperationReportNarratorTest {
     }
 
     @Test
+    void rejectsUnknownEvidenceWhenTheCodeIsAllowed() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result(json("A07089", null, null, "P1", "检查", "EV-999", null)));
+        assertNull(narrator().narrate(report()));
+    }
+
+    @Test
     void rejectsMalformedJson() {
         when(hermesChatClient.complete(anyList())).thenReturn(result("not-json"));
         assertNull(narrator().narrate(report()));
+    }
+
+    @Test
+    void acceptsFencedThinkJsonWithArrayBasisAndParagraphNumber() {
+        String response = "<think>internal reasoning</think>\\n```json\\n" + arrayJson("第1项：周期内需关注", true) + "\\n```";
+        when(hermesChatClient.complete(anyList())).thenReturn(result(response));
+
+        OperationReportResult.ReportNarrative narrative = narrator().narrate(report());
+
+        assertEquals(List.of("运行解读第1项"), narrative.operatingFindings());
+        assertEquals(List.of("报告事件"), narrative.recommendations().get(0).basis());
+        verify(hermesChatClient, times(1)).complete(anyList());
+    }
+
+    @Test
+    void acceptsMissingOptionalFields() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"周期状态需关注\"}"));
+        assertEquals("周期状态需关注", narrator().narrate(report()).executiveSummary());
+    }
+
+    @Test
+    void acceptsProvidedDataQualityPercentButRejectsTelemetryUnits() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result(
+            "{\"executiveSummary\":\"数据完整率 100.0%，可用于本次诊断。\"}"));
+        assertEquals("数据完整率 100.0%，可用于本次诊断。", narrator().narrate(report()).executiveSummary());
+
+        when(hermesChatClient.complete(anyList())).thenReturn(result(
+            "{\"executiveSummary\":\"电流达到 20 A，需要关注。\"}"));
+        assertNull(narrator().narrate(report()));
+    }
+
+    @Test
+    void repairsUnknownFieldOnceThenAccepts() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"周期状态需关注\",\"extra\":true}"),
+            result(arrayJson("周期状态需关注", false)));
+
+        assertEquals("周期状态需关注", narrator().narrate(report()).executiveSummary());
+        verify(hermesChatClient, times(2)).complete(anyList());
+    }
+
+    @Test
+    void rejectsUnsupportedCodeAfterSingleRepair() {
+        when(hermesChatClient.complete(anyList())).thenReturn(result(arrayJson("检查 F99999", false)));
+        assertNull(narrator().narrate(report()));
+        verify(hermesChatClient, times(2)).complete(anyList());
     }
 
     private OperationReportNarrator narrator() {
@@ -84,6 +136,12 @@ class OperationReportNarratorTest {
     }
 
     private static String quoted(String value) { return value == null ? "null" : "\"" + value + "\""; }
+
+    private static String arrayJson(String summary, boolean withOrdinal) {
+        return "{\"executiveSummary\":\"" + summary + "\",\"operatingFindings\":[\"运行解读"
+            + (withOrdinal ? "第1项" : "") + "\"],\"anomalyAnalysis\":[\"根据 A07089 做排查方向\"],"
+            + "\"recommendations\":[{\"priority\":\"P2\",\"action\":\"核查相关回路\",\"basis\":[\"报告事件\"]}]}";
+    }
 
     private static OperationReportResult report() {
         LocalDateTime start = LocalDateTime.of(2026, 8, 4, 0, 0);

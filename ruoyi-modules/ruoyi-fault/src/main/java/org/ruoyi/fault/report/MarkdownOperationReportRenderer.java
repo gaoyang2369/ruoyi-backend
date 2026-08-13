@@ -223,12 +223,12 @@ public final class MarkdownOperationReportRenderer {
         if (narrative == null) return null;
         StringBuilder out = new StringBuilder();
         appendNarrativePart(out, narrative.executiveSummary());
-        appendNarrativePart(out, narrative.operatingFindings());
-        appendNarrativePart(out, narrative.anomalyAnalysis());
+        narrative.operatingFindings().forEach(value -> appendNarrativePart(out, value));
+        narrative.anomalyAnalysis().forEach(value -> appendNarrativePart(out, value));
         for (OperationReportResult.NarrativeRecommendation recommendation : narrative.recommendations()) {
             if (recommendation != null && recommendation.action() != null) {
                 out.append("- ").append(recommendation.priority()).append("：").append(recommendation.action());
-                if (recommendation.basis() != null) out.append("（依据：").append(recommendation.basis()).append('）');
+                if (!recommendation.basis().isEmpty()) out.append("（依据：").append(String.join("；", recommendation.basis())).append('）');
                 out.append('\n');
             }
         }
