@@ -31,13 +31,16 @@ public class OperationReportOrchestrator {
 
     private final TelemetryQueryService telemetryQueryService;
     private final FaultDiagnosisOrchestrator faultDiagnosisOrchestrator;
+    private final OperationReportAnalysisService operationReportAnalysisService;
     private final FaultDiagnosisProperties properties;
 
     public OperationReportOrchestrator(TelemetryQueryService telemetryQueryService,
                                        FaultDiagnosisOrchestrator faultDiagnosisOrchestrator,
+                                       OperationReportAnalysisService operationReportAnalysisService,
                                        FaultDiagnosisProperties properties) {
         this.telemetryQueryService = telemetryQueryService;
         this.faultDiagnosisOrchestrator = faultDiagnosisOrchestrator;
+        this.operationReportAnalysisService = operationReportAnalysisService;
         this.properties = properties;
     }
 
@@ -47,7 +50,7 @@ public class OperationReportOrchestrator {
         TelemetryQueryResult telemetry = reportSnapshot.telemetry();
         DiagnosisResult diagnosis = faultDiagnosisOrchestrator.diagnose(command, telemetry);
         ReportHealthStatus periodStatus = ReportHealthStatus.fromDiagnosisStatus(diagnosis.status());
-        return OperationReportResult.fromSources(
+        OperationReportResult report = OperationReportResult.fromSources(
             "RP-" + IdUtil.getSnowflakeNextId(),
             command.deviceName(),
             command.inverterName(),
@@ -61,6 +64,8 @@ public class OperationReportOrchestrator {
             reportSnapshot.series(),
             properties.getMetricUnits(),
             diagnosis);
+        return report.withAnalysisFacts(operationReportAnalysisService.analyze(report.period(), report.metrics(),
+            report.metricUnits(), report.events(), reportSnapshot.analysisSamples()));
     }
 
     /**

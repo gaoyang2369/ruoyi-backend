@@ -32,8 +32,8 @@ public class OperationReportNarrator {
     private static final Set<String> RECOMMENDATION_FIELDS = Set.of("priority", "action", "basis");
     private static final Pattern CODE = Pattern.compile("(?i)(?<![A-Z0-9_-])[FA]\\d{3,}(?![A-Z0-9_-])");
     private static final Pattern EVIDENCE = Pattern.compile("(?i)(?<![A-Z0-9_-])EV-\\d+(?![A-Z0-9_-])");
-    private static final Pattern UNSUPPORTED_MEASUREMENT = Pattern.compile(
-        "(?i)\\d+(?:\\.\\d+)?\\s*(?:V|A|kW|℃|°C|r/min|伏|安|千瓦|转/分)|(?:电机|逆变器|负载|电流|电压|功率|转速|温度).{0,16}?\\d+(?:\\.\\d+)?\\s*%");
+    private static final Pattern MEASUREMENT = Pattern.compile(
+        "(?i)(?<![\\w.])(-?\\d+(?:\\.\\d+)?)\\s*(V|A|kW|℃|°C|r/min|rpm|伏|安|千瓦|转/分|%)");
     private static final Pattern HEALTH_OR_PROBABILITY = Pattern.compile("(?:健康分|健康度|健康评分|故障概率|概率).{0,8}?\\d+");
     private static final String SYSTEM = """
         你处于内部 REPORT_NARRATION 模式。只根据可信 facts 输出一个 JSON 对象，不得调用工具、重算或修改事实。
@@ -42,7 +42,12 @@ public class OperationReportNarrator {
         [{priority:"P1|P2|P3",action:"字符串",basis:["证据或事实依据"]}]；riskNotice 为字符串。
         executiveSummary 写 2 至 3 句；operatingFindings 2 至 4 条；anomalyAnalysis 2 至 4 条；recommendations 2 至 4 条且每条必须有依据；riskNotice 1 至 2 句。不得用大量空字段敷衍。
         仅可引用 allowedEvidenceCodes；故障/报警码只能来自 events；p/r 参数必须原样来自 knowledgeFragments。
-        禁止健康分、故障概率、未提供的遥测数值或单位。允许正常的序号、时间描述和段落编号。
+        可以引用 facts.metrics、facts.analysisFacts、events 时间和 dataQuality 中真实存在的遥测数值及单位；
+        不能生成 facts 中不存在的遥测数值或单位。允许正常的序号、时间描述和段落编号。
+        operatingFindings 优先说明本周期主要运行参数的变化、波动范围、当前值与周期平均/范围的关系；
+        对每个事件只根据 analysisFacts.eventComparisons 说明报警前、中、后是否观察到同步变化，以及恢复后是否接近事件前水平。
+        必须区分“观察到同步变化”和“确认因果关系”；没有事实依据时写“未观察到明显同步变化”或“现有数据不足以确认因果关系”，不得推断根因。
+        dataQuality.sufficient 为 false 或事件区间 unavailable 时，说明数据覆盖限制，避免生成趋势结论。
         手册内容只能表述为“可能原因”或“排查方向”，不能写成已确认根因。不能输出 think、Markdown 围栏或解释。
         """;
     private static final String REPAIR_SYSTEM = """
@@ -191,7 +196,7 @@ public class OperationReportNarrator {
         if (!tokensAllowed(CODE, prose, codes)) return "UNKNOWN_CODE";
         if (!tokensAllowed(EVIDENCE, prose, evidence)) return "UNKNOWN_EVIDENCE";
         if (!TechnicalTokens.valid(prose, technicalTokens(execution))) return "UNKNOWN_PARAMETER";
-        if (UNSUPPORTED_MEASUREMENT.matcher(prose).find() || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
+        if (!measurementsAllowed(prose, report) || HEALTH_OR_PROBABILITY.matcher(prose).find()) return "UNSUPPORTED_NUMBER";
         return null;
     }
 
@@ -211,6 +216,58 @@ public class OperationReportNarrator {
         Set<String> result = new LinkedHashSet<>(); execution.knowledgeSources().forEach(source -> { if (source != null) result.addAll(TechnicalTokens.tokensIn(source.content())); }); return result;
     }
 
+    /** 遥测数值采用报告事实白名单校验，允许小数展示精度差异，不允许模型自造读数。 */
+    private static boolean measurementsAllowed(String prose, OperationReportResult report) {
+        Set<MeasurementFact> allowed = new LinkedHashSet<>();
+        for (OperationReportResult.Metric metric : report.metrics()) {
+            addMeasurements(allowed, report.metricUnits().get(metric.metricName()), metric.current(), metric.average(),
+                metric.minimum(), metric.maximum());
+        }
+        for (OperationReportResult.MetricAnalysis metric : report.analysisFacts().metricAnalyses()) {
+            addMeasurements(allowed, metric.unit(), metric.startValue(), metric.endValue(), metric.delta(), metric.avg(), metric.min(),
+                metric.max(), metric.range(), metric.stdDev());
+        }
+        for (OperationReportResult.EventComparison event : report.analysisFacts().eventComparisons()) {
+            event.metrics().forEach((metricName, metric) -> addMeasurements(allowed, report.metricUnits().get(metricName),
+                metric.before().avg(), metric.before().min(), metric.before().max(), metric.during().avg(),
+                metric.during().min(), metric.during().max(), metric.after().avg(), metric.after().min(), metric.after().max()));
+        }
+        if (report.dataQuality() != null) addMeasurements(allowed, "%", report.dataQuality().completeness() * 100D);
+        Matcher matcher = MEASUREMENT.matcher(prose);
+        while (matcher.find()) {
+            double value;
+            try {
+                value = Double.parseDouble(matcher.group(1));
+            } catch (NumberFormatException ex) {
+                return false;
+            }
+            String unit = normalizeUnit(matcher.group(2));
+            if (allowed.stream().noneMatch(candidate -> candidate.unit().equals(unit)
+                && approximatelyEqual(candidate.value(), value))) return false;
+        }
+        return true;
+    }
+
+    private static void addMeasurements(Set<MeasurementFact> target, String unit, Double... values) {
+        String normalizedUnit = normalizeUnit(unit);
+        if (normalizedUnit == null) return;
+        for (Double value : values) if (value != null && Double.isFinite(value)) target.add(new MeasurementFact(normalizedUnit, value));
+    }
+
+    private static String normalizeUnit(String unit) {
+        if (StringUtils.isBlank(unit)) return null;
+        String normalized = unit.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "°c", "℃" -> "℃";
+            case "r/min", "rpm" -> "rpm";
+            default -> normalized;
+        };
+    }
+
+    private static boolean approximatelyEqual(double left, double right) {
+        return Math.abs(left - right) <= Math.max(0.001D, Math.max(Math.abs(left), Math.abs(right)) * 1E-6D);
+    }
+
     /** 仅传报告快照中的精简事实；不传原始遥测或完整趋势点。 */
     private static Map<String, Object> facts(OperationReportResult report, FaultExecutionResult execution) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -218,6 +275,8 @@ public class OperationReportNarrator {
         out.put("summary", report.summary());
         out.put("decisionRationale", report.diagnosis() == null ? List.of() : report.diagnosis().decisionRationale());
         out.put("dataQuality", report.dataQuality());
+        out.put("metrics", report.metrics());
+        out.put("analysisFacts", report.analysisFacts());
         out.put("events", report.events().stream().map(event -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("code", event.code()); item.put("type", event.type()); item.put("active", event.active());
@@ -232,5 +291,8 @@ public class OperationReportNarrator {
     private record Validation(OperationReportResult.ReportNarrative narrative, String reason) {
         static Validation accept(OperationReportResult.ReportNarrative narrative) { return new Validation(narrative, null); }
         static Validation reject(String reason) { return new Validation(null, reason); }
+    }
+
+    private record MeasurementFact(String unit, double value) {
     }
 }

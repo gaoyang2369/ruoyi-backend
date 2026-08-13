@@ -42,6 +42,7 @@ public record OperationReportResult(
     List<Trend> trends,
     List<Event> events,
     List<StatusTimelineEvent> statusTimeline,
+    AnalysisFacts analysisFacts,
     DiagnosisSummary diagnosis,
     List<Recommendation> recommendations,
     List<Evidence> evidence,
@@ -59,9 +60,24 @@ public record OperationReportResult(
         trends = trends == null ? List.of() : List.copyOf(trends);
         events = events == null ? List.of() : List.copyOf(events);
         statusTimeline = statusTimeline == null ? List.of() : List.copyOf(statusTimeline);
+        analysisFacts = analysisFacts == null ? AnalysisFacts.empty() : analysisFacts;
         recommendations = recommendations == null ? List.of() : List.copyOf(recommendations);
         evidence = evidence == null ? List.of() : List.copyOf(evidence);
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
+    }
+
+    /** 兼容既有 Report V2 构造调用；P0 分析事实默认以空结构呈现。 */
+    public OperationReportResult(Metadata metadata, Asset asset, Period period, ReportHealthStatus periodStatus,
+                                 ReportHealthStatus currentStatus, Summary summary, DataQualitySummary dataQuality,
+                                 Map<String, String> metricUnits, List<CompletenessCategory> dataCompleteness,
+                                 List<Metric> metrics, List<Trend> trends, List<Event> events,
+                                 List<StatusTimelineEvent> statusTimeline, DiagnosisSummary diagnosis,
+                                 List<Recommendation> recommendations, List<Evidence> evidence,
+                                 ReportNarrative narrative, List<String> limitations,
+                                 DiagnosisResult diagnosisDetail) {
+        this(metadata, asset, period, periodStatus, currentStatus, summary, dataQuality, metricUnits,
+            dataCompleteness, metrics, trends, events, statusTimeline, AnalysisFacts.empty(), diagnosis,
+            recommendations, evidence, narrative, limitations, diagnosisDetail);
     }
 
     /** @deprecated 报告结构化输出请改用 {@link #periodStatus()}。 */
@@ -108,6 +124,7 @@ public record OperationReportResult(
             trendsOf(series),
             events,
             timelineOf(source.statusEvents()),
+            AnalysisFacts.empty(),
             DiagnosisSummary.from(diagnosis),
             recommendationsOf(diagnosis),
             evidenceOf(diagnosis),
@@ -119,8 +136,15 @@ public record OperationReportResult(
     /** 将通过安全校验的模型叙事合并回同一份报告快照，不改变任何结构化事实。 */
     public OperationReportResult withNarrative(ReportNarrative narrative) {
         return new OperationReportResult(metadata, asset, period, periodStatus, currentStatus, summary,
-            dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, diagnosis,
+            dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, analysisFacts, diagnosis,
             recommendations, evidence, narrative, limitations, diagnosisDetail);
+    }
+
+    /** 将同一份遥测快照计算出的确定性分析事实合并进报告。 */
+    public OperationReportResult withAnalysisFacts(AnalysisFacts analysisFacts) {
+        return new OperationReportResult(metadata, asset, period, periodStatus, currentStatus, summary,
+            dataQuality, metricUnits, dataCompleteness, metrics, trends, events, statusTimeline, analysisFacts,
+            diagnosis, recommendations, evidence, narrative, limitations, diagnosisDetail);
     }
 
     /** 将后端配置中的单位冻结到报告快照；未配置的指标故意不补默认单位。 */
@@ -374,6 +398,45 @@ public record OperationReportResult(
 
     /** 供 Markdown 等时间线渲染器使用的既有状态变化事实。 */
     public record StatusTimelineEvent(LocalDateTime observedAt, String status, String faultCode, String alarmCode) {
+    }
+
+    /** 只包含由后端计算的数值事实，供 API 展示和 Hermes 叙事共同使用。 */
+    public record AnalysisFacts(List<MetricAnalysis> metricAnalyses, List<EventComparison> eventComparisons) {
+        public AnalysisFacts {
+            metricAnalyses = metricAnalyses == null ? List.of() : List.copyOf(metricAnalyses);
+            eventComparisons = eventComparisons == null ? List.of() : List.copyOf(eventComparisons);
+        }
+
+        public static AnalysisFacts empty() {
+            return new AnalysisFacts(List.of(), List.of());
+        }
+    }
+
+    public record MetricAnalysis(String metric, String unit, Double startValue, Double endValue, Double delta,
+                                 Double avg, Double min, Double max, Double range, Double stdDev) {
+    }
+
+    /** 一个事件的自然报告区间对比；endTime 为 null 表示该事件在窗口内未恢复。 */
+    public record EventComparison(String code, FaultCodeType type, LocalDateTime startTime, LocalDateTime endTime,
+                                  Map<String, EventMetricComparison> metrics) {
+        public EventComparison {
+            metrics = metrics == null ? Map.of() : Map.copyOf(metrics);
+        }
+    }
+
+    public record EventMetricComparison(IntervalMetricStats before, IntervalMetricStats during,
+                                        IntervalMetricStats after) {
+        public EventMetricComparison {
+            before = before == null ? IntervalMetricStats.unavailable() : before;
+            during = during == null ? IntervalMetricStats.unavailable() : during;
+            after = after == null ? IntervalMetricStats.unavailable() : after;
+        }
+    }
+
+    public record IntervalMetricStats(boolean available, Double avg, Double min, Double max, int sampleCount) {
+        public static IntervalMetricStats unavailable() {
+            return new IntervalMetricStats(false, null, null, null, 0);
+        }
     }
 
     /** 建议只转存既有诊断建议及其来源，不在报告层生成新建议。 */

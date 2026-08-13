@@ -106,6 +106,25 @@ class OperationReportNarratorTest {
     }
 
     @Test
+    void acceptsOnlyTelemetryMeasurementsWhitelistedByAnalysisFacts() {
+        OperationReportResult report = report().withAnalysisFacts(new OperationReportResult.AnalysisFacts(List.of(
+            new OperationReportResult.MetricAnalysis("motorTemp", "℃", 37.2D, 37.67D, 0.47D,
+                37.97D, 36D, 39.99D, 3.99D, 0.8D)), List.of()));
+        when(hermesChatClient.complete(anyList())).thenReturn(result(
+            "{\"executiveSummary\":\"电机温度周期平均值为 37.970 ℃。\"}"));
+
+        assertEquals("电机温度周期平均值为 37.970 ℃。", narrator().narrate(report).executiveSummary());
+
+        when(hermesChatClient.complete(anyList())).thenReturn(result(
+            "{\"executiveSummary\":\"电机温度达到 83.6 ℃。\"}"));
+        assertNull(narrator().narrate(report));
+
+        when(hermesChatClient.complete(anyList())).thenReturn(result(
+            "{\"executiveSummary\":\"电机温度周期平均值为 37.970 V。\"}"));
+        assertNull(narrator().narrate(report));
+    }
+
+    @Test
     void repairsUnknownFieldOnceThenAccepts() {
         when(hermesChatClient.complete(anyList())).thenReturn(result("{\"executiveSummary\":\"周期状态需关注\",\"extra\":true}"),
             result(arrayJson("周期状态需关注", false)));

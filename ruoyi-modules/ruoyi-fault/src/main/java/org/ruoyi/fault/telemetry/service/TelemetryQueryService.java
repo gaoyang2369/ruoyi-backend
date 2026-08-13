@@ -81,7 +81,7 @@ public class TelemetryQueryService {
             telemetry.rawRecords(), REPORT_METRICS, REPORT_SERIES_BUCKET_MINUTES);
         TelemetryQueryResult snapshot = telemetry.fallbackUsed()
             ? analysis.telemetry().withFallbackToLatestData(true) : analysis.telemetry();
-        return new TelemetryReportSnapshot(snapshot, analysis.statistics(), analysis.series());
+        return new TelemetryReportSnapshot(snapshot, analysis.statistics(), analysis.series(), analysis.analysisSamples());
     }
 
     /**

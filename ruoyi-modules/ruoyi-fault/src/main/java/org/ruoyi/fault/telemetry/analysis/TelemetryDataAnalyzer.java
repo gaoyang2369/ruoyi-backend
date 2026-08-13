@@ -11,6 +11,7 @@ import org.ruoyi.fault.telemetry.model.OperationStatistics;
 import org.ruoyi.fault.telemetry.model.StatusEvent;
 import org.ruoyi.fault.telemetry.model.TelemetryQueryResult;
 import org.ruoyi.fault.telemetry.model.TelemetryReportSnapshot;
+import org.ruoyi.fault.telemetry.model.ReportTelemetrySample;
 import org.ruoyi.fault.telemetry.model.TelemetryStatistics;
 import org.ruoyi.fault.telemetry.model.TelemetryStatisticsResult;
 import org.ruoyi.fault.telemetry.model.TelemetrySeriesPoint;
@@ -85,7 +86,8 @@ public class TelemetryDataAnalyzer {
         return new TelemetryReportSnapshot(telemetry,
             buildStatisticsResult(deviceName, inverterName, startTime, endTime, analysis, metrics,
                 Set.of("avg", "min", "max", "count"), true),
-            buildSeriesResult(deviceName, inverterName, startTime, endTime, analysis, metrics, bucketMinutes, true));
+            buildSeriesResult(deviceName, inverterName, startTime, endTime, analysis, metrics, bucketMinutes, true),
+            reportSamples(analysis.validRecords(), metrics));
     }
 
     private TelemetryQueryResult buildTelemetryResult(String deviceName, String inverterName,
@@ -210,6 +212,24 @@ public class TelemetryDataAnalyzer {
         }
         return new TelemetrySeriesResult(deviceName, inverterName, startTime, endTime, bucketMinutes,
             analysis.validRecords().size(), Map.copyOf(series), analysis.quality());
+    }
+
+    /**
+     * 冻结供报告分析使用的数值投影。数据已经过同一轮业务时间过滤和去重，不会触发新查询。
+     */
+    private List<ReportTelemetrySample> reportSamples(List<TimedRecord> records, List<String> metrics) {
+        List<ReportTelemetrySample> samples = new ArrayList<>();
+        for (TimedRecord record : records) {
+            Map<String, Double> values = new LinkedHashMap<>();
+            for (String metric : metrics) {
+                Float value = metricExtractor(metric).apply(record.data());
+                if (value != null) {
+                    values.put(metric, value.doubleValue());
+                }
+            }
+            samples.add(new ReportTelemetrySample(record.observedAt(), values));
+        }
+        return List.copyOf(samples);
     }
 
     /** 在读取数据库前校验时序请求，避免非法指标或桶长度触发不必要的数据查询。 */

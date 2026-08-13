@@ -52,7 +52,7 @@ class OperationReportOrchestratorTest {
     @BeforeEach
     void setUp() {
         orchestrator = new OperationReportOrchestrator(telemetryQueryService, faultDiagnosisOrchestrator,
-            new FaultDiagnosisProperties());
+            new OperationReportAnalysisService(), new FaultDiagnosisProperties());
     }
 
     @Test

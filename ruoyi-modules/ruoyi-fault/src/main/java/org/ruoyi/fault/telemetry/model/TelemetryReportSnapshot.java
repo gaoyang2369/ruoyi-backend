@@ -9,6 +9,17 @@ package org.ruoyi.fault.telemetry.model;
 public record TelemetryReportSnapshot(
     TelemetryQueryResult telemetry,
     TelemetryStatisticsResult statistics,
-    TelemetrySeriesResult series
+    TelemetrySeriesResult series,
+    java.util.List<ReportTelemetrySample> analysisSamples
 ) {
+
+    public TelemetryReportSnapshot {
+        analysisSamples = analysisSamples == null ? java.util.List.of() : java.util.List.copyOf(analysisSamples);
+    }
+
+    /** 兼容仅包含既有三个报告投影的调用方。 */
+    public TelemetryReportSnapshot(TelemetryQueryResult telemetry, TelemetryStatisticsResult statistics,
+                                   TelemetrySeriesResult series) {
+        this(telemetry, statistics, series, java.util.List.of());
+    }
 }
