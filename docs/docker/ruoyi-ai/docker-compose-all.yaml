@@ -185,6 +185,7 @@ services:
     restart: always
     ports:
       - "25137:5137"
+      - "25443:5443"
     environment:
       UPSTREAM_URL: http://backend:6039
     depends_on:
